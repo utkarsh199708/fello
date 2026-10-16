@@ -9,6 +9,7 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from app import clock
+from app.config import load_config
 from app.jobs import worker
 
 
@@ -74,10 +75,16 @@ def test_main_migrates_bootstraps_only_when_empty_then_starts(monkeypatch, model
         worker, "bootstrap", lambda cfg, data: events.append(("bootstrap", cfg, data))
     )
     monkeypatch.setattr(
+        worker, "run_nightly", lambda as_of, trigger: events.append(("night", as_of, trigger)) or []
+    )
+    monkeypatch.setattr(
         worker,
         "build_scheduler",
         lambda cron: events.append(("cron", cron)) or FakeScheduler(events),
     )
     assert worker.main(["worker"]) == 0
     bootstrapped = [] if model_exists else [("bootstrap", "config/small.yaml", "/srv/data")]
-    assert events == ["migrate", *bootstrapped, ("cron", "*/2 * * * *"), "start"]
+    # The bootstrap night runs on every start, so a worker killed after train but before that
+    # night finished completes it on restart even though a model already exists.
+    night = ("night", load_config("config/small.yaml").train_as_of, "bootstrap")
+    assert events == ["migrate", *bootstrapped, night, ("cron", "*/2 * * * *"), "start"]

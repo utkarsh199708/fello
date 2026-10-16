@@ -5,7 +5,11 @@ On start it:
 1. runs ``migrate`` (idempotent; the worker is the only process that migrates);
 2. runs ``bootstrap($BOOTSTRAP_CONFIG, $DATA_DIR)`` if ``model_versions`` is empty, i.e. on the
    first start against a fresh database;
-3. starts an APScheduler 3.x ``BlockingScheduler`` in UTC with one job: a ``CronTrigger`` built
+3. runs the bootstrap night, ``run_nightly(train_as_of, trigger="bootstrap")``, every start. A
+   worker killed after ``train`` committed but before that night finished restarts with a model,
+   so step 2 is skipped; this call finishes the night instead of leaving the list empty until
+   the next cron fire. Once the night has succeeded it is a ``no_op`` per tenant;
+4. starts an APScheduler 3.x ``BlockingScheduler`` in UTC with one job: a ``CronTrigger`` built
    from ``$NIGHTLY_CRON`` (five fields, UTC, default 02:00), ``max_instances=1`` so two nights
    never overlap, ``coalesce=True`` so a backlog of missed fires runs once, not many times.
 
@@ -28,6 +32,7 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from app.clock import now_utc
+from app.config import load_config
 from app.db import get_engine
 from app.jobs.bootstrap import bootstrap
 from app.jobs.nightly import run_nightly
@@ -93,12 +98,13 @@ def main(argv: list[str]) -> int:
     signal.signal(signal.SIGTERM, stop)
 
     migrate()
+    cfg_path = os.environ.get("BOOTSTRAP_CONFIG") or DEFAULT_BOOTSTRAP_CONFIG
     if not has_model():
         log.info("model_versions is empty: running bootstrap first")
-        bootstrap(
-            os.environ.get("BOOTSTRAP_CONFIG") or DEFAULT_BOOTSTRAP_CONFIG,
-            os.environ.get("DATA_DIR") or DEFAULT_DATA_DIR,
-        )
+        bootstrap(cfg_path, os.environ.get("DATA_DIR") or DEFAULT_DATA_DIR)
+    # Always, not only after a fresh bootstrap: finishes a bootstrap night that a crash cut short.
+    runs = run_nightly(load_config(cfg_path).train_as_of, trigger="bootstrap")
+    log.info("bootstrap night: %s", dict(Counter(run.status for run in runs)))
 
     cron = os.environ.get("NIGHTLY_CRON") or DEFAULT_CRON
     scheduler = build_scheduler(cron)
