@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Monday list - Renewal risk{% endblock %}
+{% block body %}
+<h1>Monday list</h1>
+<p>{{ tenant }}, {{ csm.name }}.
+{% if as_of %}Scores as of {{ as_of | ts }}.{% else %}<span class="muted">No scores yet.</span>{% endif %}</p>
+<table>
+  <thead><tr><th class="n">Rank</th><th>Account</th><th class="n">Probability</th><th class="n">ARR</th><th class="n">Days to renewal</th><th class="n">Rank score</th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+    <tr>
+      <td class="n">{{ r.rank_in_book }}</td>
+      <td><a href="/accounts/{{ r.account_id }}">{{ r.account }}</a></td>
+      <td class="n"><a href="/scores/{{ r.score_id }}">{{ r.probability | pct }}</a></td>
+      <td class="n">{{ r.arr | money }}</td>
+      <td class="n">{{ r.days_to_renewal if r.days_to_renewal is not none else "" }}</td>
+      <td class="n">{{ r.rank_score | money }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="6" class="muted">No accounts in this book.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+<p class="muted">Rank score is probability x ARR. Click a probability to see why.</p>
+{% endblock %}

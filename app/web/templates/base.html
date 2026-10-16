@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Renewal risk{% endblock %}</title>
+  <script src="/static/htmx.min.js"></script>
+  <style>
+    body { font: 15px/1.45 system-ui, sans-serif; margin: 0 auto; max-width: 960px; padding: 16px; color: #1c2430; }
+    nav a { margin-right: 14px; }
+    table { border-collapse: collapse; width: 100%; margin: 12px 0; }
+    th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #dde2e8; vertical-align: top; }
+    td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+    .muted { color: #66707d; }
+    pre { margin: 0; white-space: pre-wrap; font-size: 12px; }
+    code { background: #eef1f5; padding: 1px 4px; border-radius: 3px; }
+  </style>
+</head>
+<body>
+  <nav><a href="/list">Monday list</a><a href="/switch">Switch tenant / CSM</a><a href="/health">Health</a></nav>
+  {% block body %}{% endblock %}
+</body>
+</html>

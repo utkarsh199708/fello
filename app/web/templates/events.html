@@ -1,0 +1,20 @@
+<h2>Raw events behind {{ feature }}</h2>
+{% if not from_events %}
+<p class="muted">This feature comes from the account, contract or tenant row, not from events.</p>
+{% elif not events %}
+<p class="muted">No events in the window.</p>
+{% else %}
+<p class="muted">{{ total }} event{{ "" if total == 1 else "s" }}{% if total > limit %}, newest {{ limit }} shown{% endif %}.</p>
+<table>
+  <thead><tr><th>Occurred</th><th>Received</th><th>Source</th><th>Type</th><th>Matched by</th><th>Payload</th></tr></thead>
+  <tbody>
+  {% for e in events %}
+    <tr>
+      <td>{{ e.occurred_at | ts }}</td><td>{{ e.received_at | ts }}</td>
+      <td>{{ e.source }}</td><td>{{ e.event_type }}</td><td>{{ e.match_method }}</td>
+      <td><pre>{{ e.payload | tojson }}</pre></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}

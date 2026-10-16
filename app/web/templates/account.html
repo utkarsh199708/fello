@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Account - Renewal risk{% endblock %}
+{% block body %}
+<h1>{{ account.name }}</h1>
+<p class="muted">{{ account.website_domain }}, CSM {{ account.csm or "none" }}, started {{ account.started_at }}</p>
+<h2>Contracts</h2>
+<table>
+  <thead><tr><th class="n">Cycle</th><th>Start</th><th>End</th><th class="n">ARR</th></tr></thead>
+  <tbody>{% for c in contracts %}<tr><td class="n">{{ c.cycle_number }}</td><td>{{ c.start_date }}</td><td>{{ c.end_date }}</td><td class="n">{{ c.arr | money }}</td></tr>{% endfor %}</tbody>
+</table>
+<h2>Score history</h2>
+<table>
+  <thead><tr><th>As of</th><th class="n">Probability</th><th class="n">Rank</th><th>Model</th></tr></thead>
+  <tbody>{% for s in scores %}<tr><td><a href="/scores/{{ s.score_id }}">{{ s.as_of | ts }}</a></td><td class="n">{{ s.probability | pct }}</td><td class="n">{{ s.rank_in_book }}</td><td><code>{{ s.model_version }}</code></td></tr>
+  {% else %}<tr><td colspan="4" class="muted">Not scored yet.</td></tr>{% endfor %}</tbody>
+</table>
+<h2>Timeline</h2>
+<p class="muted">Events received by {{ as_of | ts }}, newest first, at most 200.</p>
+<table>
+  <thead><tr><th>Occurred</th><th>Source</th><th>Type</th><th>Matched by</th><th>Payload</th></tr></thead>
+  <tbody>{% for e in timeline %}<tr><td>{{ e.occurred_at | ts }}</td><td>{{ e.source }}</td><td>{{ e.event_type }}</td><td>{{ e.match_method }}</td><td><pre>{{ e.payload | tojson }}</pre></td></tr>
+  {% else %}<tr><td colspan="5" class="muted">No events.</td></tr>{% endfor %}</tbody>
+</table>
+{% endblock %}

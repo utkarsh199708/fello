@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Switch - Renewal risk{% endblock %}
+{% block body %}
+<h1>Switch tenant and CSM</h1>
+<h2>1. Tenant</h2>
+<ul>
+{% for t in tenants %}
+  <li>{% if t.tenant_id == chosen %}<strong>{{ t.name }}</strong>{% else %}<a href="/switch?tenant_id={{ t.tenant_id }}">{{ t.name }}</a>{% endif %}
+      <span class="muted">{{ t.slug }}, {{ t.segment }}</span></li>
+{% endfor %}
+</ul>
+{% if chosen %}
+<h2>2. CSM</h2>
+<form method="post" action="/switch">
+  <input type="hidden" name="tenant_id" value="{{ chosen }}">
+  <select name="csm_id" required>
+    {% for c in csms %}<option value="{{ c.csm_id }}">{{ c.name }} ({{ c.email }})</option>{% endfor %}
+  </select>
+  <button type="submit">Show my list</button>
+</form>
+{% endif %}
+{% endblock %}

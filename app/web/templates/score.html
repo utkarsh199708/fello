@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Score - Renewal risk{% endblock %}
+{% block body %}
+<h1>{{ score.account }}</h1>
+<p><a href="/accounts/{{ score.account_id }}">Account timeline</a></p>
+<p>Probability <strong>{{ score.probability | pct }}</strong>, rank {{ score.rank_in_book }},
+   model <code>{{ score.model_version }}</code>, as of {{ score.as_of | ts }}.
+   Events counted were received by {{ score.ingest_watermark | ts }}.</p>
+<p>Margin check: expected value <code>{{ score.expected_value | num }}</code> + sum of contributions
+   = <code>{{ total | num }}</code>; stored margin <code>{{ score.margin | num }}</code>.</p>
+<table>
+  <thead><tr><th>Feature</th><th class="n">Value</th><th class="n">Contribution</th><th></th></tr></thead>
+  <tbody>
+  <tr><td>expected_value (intercept)</td><td></td><td class="n">{{ score.expected_value | num }}</td><td></td></tr>
+  {% for r in rows %}
+    <tr>
+      <td>{{ r.name }}</td>
+      <td class="n">{{ r.value | num }}</td>
+      <td class="n">{{ r.contribution | num }}</td>
+      <td>{% if r.has_events %}<a href="#" hx-get="/scores/{{ score.score_id }}/events/{{ r.name }}" hx-target="#events" hx-swap="innerHTML">raw events</a>{% endif %}</td>
+    </tr>
+  {% endfor %}
+  <tr><th>margin</th><td></td><th class="n">{{ total | num }}</th><td></td></tr>
+  </tbody>
+</table>
+<div id="events" class="muted">Choose "raw events" on a feature to see what is behind it.</div>
+{% endblock %}
