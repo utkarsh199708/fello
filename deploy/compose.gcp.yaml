@@ -1,0 +1,43 @@
+# Production override for the single GCP VM. Run on the VM from the repo root:
+#   docker compose -f compose.yaml -f deploy/compose.gcp.yaml up -d --build
+# Adds Caddy for HTTPS on <ip>.sslip.io, a real Postgres password, restart policies,
+# and a volume so generated data survives container rebuilds. Secrets come from .env,
+# which deploy/vm-setup.sh writes on the VM and which never leaves it.
+services:
+  db:
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
+    restart: unless-stopped
+
+  web:
+    environment:
+      DATABASE_URL: postgresql+psycopg://postgres:${POSTGRES_PASSWORD}@db:5432/app
+      COOKIE_SECURE: "1"
+    restart: unless-stopped
+
+  worker:
+    environment:
+      DATABASE_URL: postgresql+psycopg://postgres:${POSTGRES_PASSWORD}@db:5432/app
+      COOKIE_SECURE: "1"
+    volumes:
+      - appdata:/srv/data
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:?SITE_ADDRESS must be set in .env}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - web
+
+volumes:
+  appdata:
+  caddy_data:
+  caddy_config:

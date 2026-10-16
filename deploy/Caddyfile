@@ -1,0 +1,6 @@
+# HTTPS in front of the web service. SITE_ADDRESS is <ip-with-dashes>.sslip.io, which resolves
+# to the VM's static IP, so Caddy can get a Let's Encrypt certificate with no domain of our own.
+{$SITE_ADDRESS} {
+	encode gzip
+	reverse_proxy web:8000
+}
