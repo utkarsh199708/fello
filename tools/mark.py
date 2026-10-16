@@ -9,6 +9,7 @@ Usage:
 Statuses: todo, in_progress, done, blocked, cut.
 "done" also ticks the checkbox in docs/TASKS.md, the source of truth.
 """
+
 from __future__ import annotations
 
 import json
@@ -52,7 +53,11 @@ def main() -> None:
     status, msg = sys.argv[2], sys.argv[3]
     fd = acquire()
     try:
-        st = json.loads(STATE.read_text(encoding="utf-8")) if STATE.exists() else {"status": {}, "log": []}
+        st = (
+            json.loads(STATE.read_text(encoding="utf-8"))
+            if STATE.exists()
+            else {"status": {}, "log": []}
+        )
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
         for tid in ids:
             if status == "done":

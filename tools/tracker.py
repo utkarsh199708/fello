@@ -5,6 +5,7 @@ Run: python tools/tracker.py
 TASKS.md checkboxes are the source of truth for "done". tracker_state.json holds
 agent assignments, in-progress/blocked/cut flags, and the phase log.
 """
+
 from __future__ import annotations
 
 import html
@@ -18,10 +19,25 @@ STATE = ROOT / "docs" / "tracker_state.json"
 OUT = ROOT / "docs" / "tracker.html"
 
 ROLES = {
-    "lead": ("Tech lead", "Plans each step, reviews every diff, owns the 10x analysis", "opus", "xhigh"),
-    "platform": ("Platform engineer", "Schema, roles, row-level security, tenant context", "opus", "high"),
+    "lead": (
+        "Tech lead",
+        "Plans each step, reviews every diff, owns the 10x analysis",
+        "opus",
+        "xhigh",
+    ),
+    "platform": (
+        "Platform engineer",
+        "Schema, roles, row-level security, tenant context",
+        "opus",
+        "high",
+    ),
     "data": ("Data engineer", "Synthetic generator and data report", "sonnet", "high"),
-    "pipeline": ("Pipeline engineer", "Loader, identity resolution, dedup, drift, quality gate", "sonnet", "high"),
+    "pipeline": (
+        "Pipeline engineer",
+        "Loader, identity resolution, dedup, drift, quality gate",
+        "sonnet",
+        "high",
+    ),
     "ml": ("ML engineer", "Features, labels, model, evaluation", "opus", "high"),
     "jobs": ("Jobs engineer", "Nightly run, policy, tasks, briefings", "opus", "high"),
     "web": ("Web engineer", "FastAPI pages and the CSM workflow", "sonnet", "medium"),
@@ -33,21 +49,60 @@ ROLES = {
 
 ASSIGN = {
     **{f"D{i}": "you" for i in range(1, 7)},
-    "0.1": "writer", "0.2": "writer", "0.3": "ops", "0.4": "ops", "0.5": "ops", "0.6": "writer",
-    "1.1": "data", "1.2": "data", "1.3": "platform", "1.4": "platform", "1.5": "pipeline",
-    "1.6": "pipeline", "1.7": "ml", "1.8": "ml", "1.9": "ml", "1.10": "jobs", "1.11": "jobs",
-    "1.12": "web", "1.13": "jobs", "1.14": "qa", "1.15": "you",
-    **{f"2.{i}": "data" for i in range(1, 14)}, "2.14": "qa", "2.15": "you",
-    **{f"3.{i}": "pipeline" for i in range(1, 7)}, "3.7": "qa",
-    **{f"4.{i}": "ml" for i in range(1, 11)}, "4.9": "qa",
-    **{f"5.{i}": "jobs" for i in range(1, 7)}, "5.7": "web", "5.8": "qa",
-    **{f"6.{i}": "web" for i in range(1, 9)}, "6.9": "qa",
-    "7.1": "you", "7.2": "lead", "7.3": "writer", "7.4": "writer", "7.5": "writer",
-    "7.6": "you", "7.7": "you", "8.1": "web",
+    "0.1": "writer",
+    "0.2": "writer",
+    "0.3": "ops",
+    "0.4": "ops",
+    "0.5": "ops",
+    "0.6": "writer",
+    "1.1": "data",
+    "1.2": "data",
+    "1.3": "platform",
+    "1.4": "platform",
+    "1.5": "pipeline",
+    "1.6": "pipeline",
+    "1.7": "ml",
+    "1.8": "ml",
+    "1.9": "ml",
+    "1.10": "jobs",
+    "1.11": "jobs",
+    "1.12": "web",
+    "1.13": "jobs",
+    "1.14": "qa",
+    "1.15": "you",
+    **{f"2.{i}": "data" for i in range(1, 14)},
+    "2.14": "qa",
+    "2.15": "you",
+    **{f"3.{i}": "pipeline" for i in range(1, 7)},
+    "3.7": "qa",
+    **{f"4.{i}": "ml" for i in range(1, 11)},
+    "4.9": "qa",
+    **{f"5.{i}": "jobs" for i in range(1, 7)},
+    "5.7": "web",
+    "5.8": "qa",
+    **{f"6.{i}": "web" for i in range(1, 9)},
+    "6.9": "qa",
+    "7.1": "you",
+    "7.2": "lead",
+    "7.3": "writer",
+    "7.4": "writer",
+    "7.5": "writer",
+    "7.6": "you",
+    "7.7": "you",
+    "8.1": "web",
 }
 # Effort overrides where a task is harder or easier than its role's default.
-EFFORT = {"1.3": "xhigh", "1.4": "xhigh", "2.2": "xhigh", "4.6": "xhigh", "5.4": "xhigh",
-          "1.11": "medium", "2.13": "medium", "0.5": "low", "6.2": "low"}
+EFFORT = {
+    "1.3": "xhigh",
+    "1.4": "xhigh",
+    "2.2": "xhigh",
+    "4.6": "xhigh",
+    "5.4": "xhigh",
+    "1.11": "medium",
+    "2.13": "medium",
+    "0.5": "low",
+    "6.2": "low",
+}
 
 LINE = re.compile(r"^- \[(?P<x>[ x])\] \*\*(?P<id>D\d|\d+\.\d+)\.? (?P<title>[^*]+)\*\*")
 STEP = re.compile(r"^## (Step (\d)|Decisions|Optional)")
@@ -61,8 +116,14 @@ def parse():
             step = m.group(2) or ("D" if m.group(1) == "Decisions" else "8")
         m = LINE.match(line)
         if m:
-            tasks.append({"id": m["id"], "title": m["title"].strip().rstrip("."),
-                          "done": m["x"] == "x", "step": step})
+            tasks.append(
+                {
+                    "id": m["id"],
+                    "title": m["title"].strip().rstrip("."),
+                    "done": m["x"] == "x",
+                    "step": step,
+                }
+            )
     return tasks
 
 
@@ -72,9 +133,18 @@ def load_state():
     return {"status": {}, "log": [], "updated": ""}
 
 
-STEP_NAMES = {"D": "Your decisions", "0": "Brief and repo", "1": "Walking skeleton",
-              "2": "Generator to spec", "3": "Pipeline hardening", "4": "Model and evaluation",
-              "5": "Agentic job", "6": "Dashboard deepening", "7": "Ship", "8": "Optional"}
+STEP_NAMES = {
+    "D": "Your decisions",
+    "0": "Brief and repo",
+    "1": "Walking skeleton",
+    "2": "Generator to spec",
+    "3": "Pipeline hardening",
+    "4": "Model and evaluation",
+    "5": "Agentic job",
+    "6": "Dashboard deepening",
+    "7": "Ship",
+    "8": "Optional",
+}
 
 
 def status_of(t, st):
@@ -91,8 +161,13 @@ def render():
     for t in tasks:
         role = ASSIGN.get(t["id"], "lead")
         name, _, model, effort = ROLES[role]
-        t.update(role=role, agent=name, model=model,
-                 effort=EFFORT.get(t["id"], effort), status=status_of(t, st))
+        t.update(
+            role=role,
+            agent=name,
+            model=model,
+            effort=EFFORT.get(t["id"], effort),
+            status=status_of(t, st),
+        )
     e = html.escape
     agent_tasks = [t for t in tasks if t["role"] != "you"]
     done = sum(t["status"] == "done" for t in agent_tasks)
@@ -106,12 +181,18 @@ def render():
         if not ts:
             continue
         d = sum(t["status"] == "done" for t in ts)
-        state = ("done" if d == len(ts) else
-                 "active" if any(t["status"] in ("in_progress", "done") for t in ts) else "idle")
+        state = (
+            "done"
+            if d == len(ts)
+            else "active"
+            if any(t["status"] in ("in_progress", "done") for t in ts)
+            else "idle"
+        )
         steps_html.append(
             f'<li class="step {state}"><span class="sk">{"D" if key == "D" else key}</span>'
             f'<span class="sn">{e(label)}</span><span class="sc">{d}/{len(ts)}</span>'
-            f'<span class="bar"><i style="width:{round(100*d/len(ts))}%"></i></span></li>')
+            f'<span class="bar"><i style="width:{round(100 * d / len(ts))}%"></i></span></li>'
+        )
 
     roster = []
     for key, (name, job, model, effort) in ROLES.items():
@@ -124,7 +205,8 @@ def render():
             f'<tr><td><b>{e(name)}</b><div class="muted">{e(job)}</div></td>'
             f'<td><span class="chip m-{model}">{model}</span></td><td>{effort}</td>'
             f'<td class="num">{d}/{len(mine)}</td>'
-            f'<td>{"<span class=pill-live>working on " + e(", ".join(live)) + "</span>" if live else ""}</td></tr>')
+            f"<td>{'<span class=pill-live>working on ' + e(', '.join(live)) + '</span>' if live else ''}</td></tr>"
+        )
 
     rows = []
     for t in tasks:
@@ -132,15 +214,25 @@ def render():
             f'<tr data-step="{t["step"]}" data-status="{t["status"]}">'
             f'<td class="num id">{e(t["id"])}</td><td>{e(t["title"])}</td>'
             f'<td>{e(t["agent"])}</td><td><span class="chip m-{t["model"]}">{t["model"]}</span></td>'
-            f'<td>{t["effort"]}</td><td><span class="st st-{t["status"]}">{t["status"].replace("_", " ")}</span></td></tr>')
+            f'<td>{t["effort"]}</td><td><span class="st st-{t["status"]}">{t["status"].replace("_", " ")}</span></td></tr>'
+        )
 
-    log = "".join(f'<li><time>{e(x["at"])}</time> {e(x["msg"])}</li>' for x in reversed(st["log"][-30:]))
-    yours = "".join(f'<li><b>{e(t["id"])}</b> {e(t["title"])}</li>' for t in yours_open)
+    log = "".join(
+        f"<li><time>{e(x['at'])}</time> {e(x['msg'])}</li>" for x in reversed(st["log"][-30:])
+    )
+    yours = "".join(f"<li><b>{e(t['id'])}</b> {e(t['title'])}</li>" for t in yours_open)
 
-    page = TEMPLATE.format(pct=pct, done=done, total=total, steps="".join(steps_html),
-                           roster="".join(roster), rows="".join(rows), log=log or "<li>No runs yet.</li>",
-                           yours=yours or "<li>Nothing waiting on you.</li>",
-                           updated=e(st.get("updated", "")))
+    page = TEMPLATE.format(
+        pct=pct,
+        done=done,
+        total=total,
+        steps="".join(steps_html),
+        roster="".join(roster),
+        rows="".join(rows),
+        log=log or "<li>No runs yet.</li>",
+        yours=yours or "<li>Nothing waiting on you.</li>",
+        updated=e(st.get("updated", "")),
+    )
     OUT.write_text(page, encoding="utf-8", newline="\n")
     return done, total
 
