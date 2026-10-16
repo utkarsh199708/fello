@@ -6,6 +6,7 @@ import base64
 import os
 import subprocess
 import sys
+from datetime import timedelta
 
 import pytest
 import sqlalchemy as sa
@@ -202,6 +203,44 @@ def test_account_page_hides_contract_cycles_after_as_of(client, seeded):
     assert f'<td class="n">{row.cycle_number}</td>' not in page.text
 
     assert past and f'<td class="n">{row.cycle_number - 1}</td>' in page.text  # started cycles show
+
+
+def test_account_page_shows_a_new_cycle_only_once_its_renewal_event_arrived(
+    client, seeded, database_url
+):
+    """A cycle that has started by date but whose renewal event is not in yet must not show."""
+    tid = seeded[0]
+    with tenant_tx(tid) as conn:
+        latest = conn.execute(sa.text("SELECT max(as_of) FROM scores")).scalar_one()
+        row = conn.execute(
+            sa.text(
+                """
+                SELECT e.normalised_event_id, e.received_at, c.account_id, c.cycle_number
+                FROM contracts c JOIN normalised_events e
+                  ON e.account_id = c.account_id
+                 AND e.event_type = 'opportunity_stage_changed'
+                 AND (e.attrs->>'renewal_date')::date = c.start_date
+                WHERE c.cycle_number > 1 AND e.received_at <= :latest
+                LIMIT 1
+                """
+            ),
+            {"latest": latest},
+        ).one()
+    switch(client, tid)
+    cell = f'<td class="n">{row.cycle_number}</td>'
+    assert cell in client.get(f"/accounts/{row.account_id}").text
+    # Move the event's arrival to after the latest score night (as the admin role, since the
+    # runtime roles cannot update events), check the cycle is hidden, then put it back.
+    admin = make_engine(database_url, poolclass=sa.pool.NullPool)
+    move = sa.text("UPDATE normalised_events SET received_at = :r WHERE normalised_event_id = :e")
+    try:
+        with admin.begin() as conn:
+            conn.execute(move, {"r": latest + timedelta(hours=1), "e": row.normalised_event_id})
+        assert cell not in client.get(f"/accounts/{row.account_id}").text
+    finally:
+        with admin.begin() as conn:
+            conn.execute(move, {"r": row.received_at, "e": row.normalised_event_id})
+        admin.dispose()
 
 
 def test_unassigned_book_is_reachable(client, seeded, database_url):

@@ -166,16 +166,27 @@ def get_account(conn: Connection, account_id: uuid.UUID) -> dict[str, Any] | Non
 def account_contracts(
     conn: Connection, account_id: uuid.UUID, as_of: datetime
 ) -> list[dict[str, Any]]:
-    """Cycles that had started by ``as_of``.
+    """Cycles that the system knew had started by ``as_of``.
 
     contracts.csv runs ahead of time (it holds cycles up to the horizon), so showing a later
-    cycle would tell a CSM whether, and at what ARR, a renewal will happen before it has.
+    cycle would tell a CSM whether, and at what ARR, a renewal will happen before it has. A
+    cycle after the first shows only once the Salesforce renewal event that opened it had been
+    received, the same rule as ``app.ml.features.active_contracts``.
     """
     return _rows(
         conn,
-        "SELECT cycle_number, start_date, end_date, arr FROM contracts "
-        "WHERE account_id = :a AND start_date <= CAST(:as_of AS date) "
-        "ORDER BY cycle_number DESC",
+        """
+        SELECT c.cycle_number, c.start_date, c.end_date, c.arr
+        FROM contracts c
+        WHERE c.account_id = :a AND c.start_date <= CAST(:as_of AS date)
+          AND (c.cycle_number = 1 OR EXISTS (
+                SELECT 1 FROM normalised_events e
+                WHERE e.account_id = c.account_id
+                  AND e.source = 'salesforce' AND e.event_type = 'opportunity_stage_changed'
+                  AND (e.attrs->>'renewal_date')::date = c.start_date
+                  AND e.received_at <= :as_of))
+        ORDER BY c.cycle_number DESC
+        """,
         a=account_id,
         as_of=as_of,
     )
