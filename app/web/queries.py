@@ -82,10 +82,11 @@ def ranked_list(conn: Connection, csm_id: uuid.UUID | str, as_of: datetime) -> l
         conn,
         f"""
         SELECT s.score_id, s.account_id, a.name AS account, s.rank_in_book, s.probability,
-               s.arr, s.days_to_renewal, s.rank_score
+               s.arr, s.days_to_renewal, s.rank_score, s.colour, s.evidence_state,
+               (s.coverage->>'total_event_count')::int AS event_count
         FROM scores s JOIN accounts a USING (account_id)
         WHERE {owner} AND s.as_of = :d
-        ORDER BY s.rank_in_book, a.name
+        ORDER BY s.rank_in_book NULLS LAST, a.name
         """,
         d=as_of,
         **({} if csm_id == UNASSIGNED else {"c": csm_id}),

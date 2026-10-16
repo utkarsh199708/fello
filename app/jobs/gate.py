@@ -14,7 +14,9 @@ Checks (PLAN.md section 7, stage 2):
   field), and scores would silently miss that source.
 - **null_rates**: in tonight's scored feature vectors, a feature whose source is connected is
   NULL for at most ``MAX_NULL_RATE`` of accounts, and a feature whose source is not connected is
-  NULL for all of them (NULL, never zero). Account and contract features are never NULL.
+  NULL for all of them (NULL, never zero). Account and contract features are never NULL. A
+  feature listed in ``SPARSE_FEATURES`` (mean CSAT: most accounts have no rated ticket) has no
+  cap on its NULL rate while connected.
 - **mean_shift**: the mean probability moved less than ``MAX_MEAN_SHIFT`` from the previous
   succeeded night scored by the same model. A different model (a rebaseline) skips the check,
   since a new model is expected to move the mean.
@@ -34,7 +36,7 @@ import sqlalchemy as sa
 from sqlalchemy.engine import Connection
 
 from app.config import parse_utc
-from app.ml.feature_spec import CONNECTED_FLAGS, FEATURE_SOURCE, FEATURES
+from app.ml.feature_spec import CONNECTED_FLAGS, FEATURE_SOURCE, FEATURES, SPARSE_FEATURES
 
 MAX_QUARANTINE_RATE = 0.10
 MAX_NULL_RATE = 0.50
@@ -89,7 +91,7 @@ def evaluate(
         elif not connected.get(source, False):
             if rate < 1:
                 r.failed.append(f"null_rates: {feature} has values but {source} is not connected")
-        elif rate > MAX_NULL_RATE:
+        elif rate > MAX_NULL_RATE and feature not in SPARSE_FEATURES:
             r.failed.append(
                 f"null_rates: {feature} is NULL for {rate:.1%} (limit {MAX_NULL_RATE:.0%})"
             )

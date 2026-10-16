@@ -26,7 +26,13 @@ from app.vocab import EVENT_TYPES, OUTCOME_EVENT_TYPES, SOURCES
 # next cycle only once that renewal's Salesforce event has arrived, not at 00:00 on its date.
 # fs3: a renewal counts as decided once either Salesforce or Stripe has reported it (the
 # two are reconciled into one outcome, task 3.1), so the cycle can move a few hours sooner.
-FEATURE_SET_VERSION = "fs3"
+# fs4: the full feature set of PLAN.md section 6 (task 4.1).
+FEATURE_SET_VERSION = "fs4"
+
+# A "days since" feature is capped here, and takes the cap when the event never happened. That
+# keeps it defined (never NULL) for a connected source; NULL stays reserved for "not connected".
+DAYS_SINCE_CAP = 365
+MONTHS_SINCE_CAP = 12
 
 # Order matters: it is the column order of the feature matrix and of the model's coefficients.
 FEATURES = (
@@ -35,18 +41,36 @@ FEATURES = (
     "arr",
     "days_to_renewal",
     "cycle_number",
+    "prior_contraction",  # 1 if the active contract's ARR is below 70% of the previous one's
     # Coverage.
     "total_event_count",
+    "events_90d",
+    "n_sources_with_events_90d",
     # Zendesk.
     "tickets_30d",
+    "tickets_90d",
     "ticket_rate_30d_vs_prior_90d",
+    "open_tickets",
+    "high_priority_30d",
+    "mean_csat_90d",
+    "days_since_last_ticket",
     # Product.
     "active_users_last_month",
+    "sessions_last_month",
     "usage_change_last_month_vs_prior_3",
+    "seat_utilisation",
+    "months_since_last_activity",
     # Stripe.
     "failed_payments_90d",
+    "unrecovered_failure_90d",
+    "days_since_last_failure",
     # Gmail.
     "threads_90d",
+    "outbound_unanswered_30d",
+    "bounce_or_autoreply_90d",
+    "days_since_last_inbound",
+    # Salesforce.
+    "missing_field_count",
     # Which sources the tenant had connected at as_of: 0 or 1, never NULL.
     "zendesk_connected",
     "product_connected",
@@ -58,12 +82,29 @@ FEATURES = (
 # connected at as_of.
 FEATURE_SOURCE = {
     "tickets_30d": "zendesk",
+    "tickets_90d": "zendesk",
     "ticket_rate_30d_vs_prior_90d": "zendesk",
+    "open_tickets": "zendesk",
+    "high_priority_30d": "zendesk",
+    "mean_csat_90d": "zendesk",
+    "days_since_last_ticket": "zendesk",
     "active_users_last_month": "product",
+    "sessions_last_month": "product",
     "usage_change_last_month_vs_prior_3": "product",
+    "seat_utilisation": "product",
+    "months_since_last_activity": "product",
     "failed_payments_90d": "stripe",
+    "unrecovered_failure_90d": "stripe",
+    "days_since_last_failure": "stripe",
     "threads_90d": "gmail",
+    "outbound_unanswered_30d": "gmail",
+    "bounce_or_autoreply_90d": "gmail",
+    "days_since_last_inbound": "gmail",
 }
+
+# Features where NULL is normal even with the source connected: most accounts have no rated
+# ticket in 90 days. The data-quality gate does not cap their NULL rate.
+SPARSE_FEATURES = frozenset({"mean_csat_90d"})
 
 CONNECTED_FLAGS = {
     f"{source}_connected": source for source in ("zendesk", "product", "stripe", "gmail")
@@ -107,24 +148,50 @@ NON_OUTCOME_TYPES = tuple(
 
 # For each feature, the events behind it. None means the value comes from the account, contract
 # or tenant row, not from events.
+TICKET_TYPES = ("ticket_created", "ticket_updated")
+STRIPE_INVOICE_TYPES = ("invoice.paid", "invoice.payment_failed")
+
 FEATURE_EVENTS: dict[str, EventFilter | None] = {
     "account_tenure_days": None,
     "arr": None,
     "days_to_renewal": None,
     "cycle_number": None,
+    "prior_contraction": None,
     "total_event_count": EventFilter(SOURCES, NON_OUTCOME_TYPES, None),
+    "events_90d": EventFilter(SOURCES, NON_OUTCOME_TYPES, 90),
+    "n_sources_with_events_90d": EventFilter(SOURCES, NON_OUTCOME_TYPES, 90),
     "tickets_30d": EventFilter(("zendesk",), ("ticket_created",), TICKET_WINDOW),
+    "tickets_90d": EventFilter(("zendesk",), ("ticket_created",), 90),
     "ticket_rate_30d_vs_prior_90d": EventFilter(
         ("zendesk",), ("ticket_created",), TICKET_WINDOW + TICKET_PRIOR_WINDOW
     ),
+    "open_tickets": EventFilter(("zendesk",), TICKET_TYPES, None),
+    "high_priority_30d": EventFilter(("zendesk",), ("ticket_created",), TICKET_WINDOW),
+    "mean_csat_90d": EventFilter(("zendesk",), TICKET_TYPES, 90),
+    "days_since_last_ticket": EventFilter(("zendesk",), ("ticket_created",), DAYS_SINCE_CAP),
     "active_users_last_month": EventFilter(
+        ("product",), ("usage_rollup_monthly",), USAGE_RECENT_WINDOW
+    ),
+    "sessions_last_month": EventFilter(
         ("product",), ("usage_rollup_monthly",), USAGE_RECENT_WINDOW
     ),
     "usage_change_last_month_vs_prior_3": EventFilter(
         ("product",), ("usage_rollup_monthly",), USAGE_HISTORY_WINDOW
     ),
+    "seat_utilisation": EventFilter(("product",), ("usage_rollup_monthly",), USAGE_RECENT_WINDOW),
+    "months_since_last_activity": EventFilter(
+        ("product",), ("usage_rollup_monthly",), MONTHS_SINCE_CAP * 31
+    ),
     "failed_payments_90d": EventFilter(("stripe",), ("invoice.payment_failed",), PAYMENT_WINDOW),
+    "unrecovered_failure_90d": EventFilter(("stripe",), STRIPE_INVOICE_TYPES, PAYMENT_WINDOW),
+    "days_since_last_failure": EventFilter(
+        ("stripe",), ("invoice.payment_failed",), DAYS_SINCE_CAP
+    ),
     "threads_90d": EventFilter(("gmail",), ("message",), THREAD_WINDOW),
+    "outbound_unanswered_30d": EventFilter(("gmail",), ("message",), 30),
+    "bounce_or_autoreply_90d": EventFilter(("gmail",), ("message",), 90),
+    "days_since_last_inbound": EventFilter(("gmail",), ("message",), DAYS_SINCE_CAP),
+    "missing_field_count": EventFilter(("salesforce",), ("account_upserted",), None),
     "zendesk_connected": None,
     "product_connected": None,
     "stripe_connected": None,

@@ -284,7 +284,7 @@ def test_migrate_is_idempotent(admin):
     assert migrate_main(["migrate"]) == 0  # the `python -m app migrate` entry point
     with admin.connect() as conn:
         assert conn.execute(sa.text("SELECT version_num FROM alembic_version")).scalar_one() == (
-            "0002"
+            "0003"
         )
         assert conn.execute(
             sa.text("SELECT count(*) FROM pg_policies WHERE schemaname = 'public'")

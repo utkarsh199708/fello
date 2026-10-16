@@ -139,7 +139,7 @@ generator:
   planted:                       # "signals were sitting right there" regression cases
     count: 10                    # across tenants old enough to have holdout renewals
     lead_weeks: [10, 12]         # health starts falling this long before the lost renewal
-    health_drop: 2.5
+    health_drop: 3.5               # 2.5 surfaced 7 of 10 in time on the full config
   drift:                         # the instant each source moved to its latest payload format
     zendesk_priority_string_from: "2024-10-07T00:00:00Z"        # year 2: integer -> name
     salesforce_arr_field_renamed_from: "2025-10-06T00:00:00Z"   # year 3: arr__c renamed

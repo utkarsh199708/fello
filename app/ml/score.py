@@ -9,6 +9,15 @@ small account does not outrank a moderate risk on a large one. ``rank_in_book`` 
 accounts 1, 2, 3 ... by ``rank_score`` descending (ties broken by account id so the order is
 stable). Accounts with no CSM form one book of their own.
 
+Evidence (task 4.5). An account younger than ``MIN_TENURE_DAYS`` or with fewer than
+``MIN_EVENTS`` events is ``insufficient``: it is still scored and stored, but takes no place in
+the ranking (``rank_in_book`` NULL) and is shown grey, in a "not enough signal" list of its own.
+Thin accounts are not green.
+
+Colour is derived from rank, a display rather than a model (docs/brief.md): red is the top ``k``
+of the book, yellow the next ``2k``, green the rest. So every CSM always has ``k`` red accounts:
+a week's work queue. ``coverage`` records how much evidence the score rests on.
+
 Functions here take ``conn`` and never commit: the caller wraps them in ``tenant_tx``.
 """
 
@@ -45,6 +54,38 @@ SCORE_COLUMNS = (
     "rank_in_book",
     "k",
     "run_id",
+    "evidence_state",
+    "colour",
+    "coverage",
+)
+
+MIN_TENURE_DAYS = 30
+MIN_EVENTS = 5
+YELLOW_MULTIPLE = 2  # yellow is the 2k accounts after the k red ones
+
+
+def evidence_state(features: pd.DataFrame) -> pd.Series:
+    """``scored`` or ``insufficient`` per row, from tenure and event count."""
+    thin = (features["account_tenure_days"] < MIN_TENURE_DAYS) | (
+        features["total_event_count"] < MIN_EVENTS
+    )
+    return thin.map({True: "insufficient", False: "scored"})
+
+
+def colour_of(rank, k: int) -> str:
+    """Red, yellow or green from the rank in the book; grey when there is no rank."""
+    if rank is None or pd.isna(rank):
+        return "grey"
+    if rank <= k:
+        return "red"
+    return "yellow" if rank <= k * (1 + YELLOW_MULTIPLE) else "green"
+
+
+COVERAGE_FEATURES = (
+    "account_tenure_days",
+    "total_event_count",
+    "events_90d",
+    "n_sources_with_events_90d",
 )
 
 
@@ -122,7 +163,20 @@ def score_tenant(
         }
     )
     frame["rank_score"] = frame["probability"] * frame["arr"]
-    frame["rank_in_book"] = rank_books(frame)
+    frame["evidence_state"] = evidence_state(X).to_numpy()
+    scored = frame["evidence_state"] == "scored"
+    frame["rank_in_book"] = rank_books(frame[scored]).reindex(frame.index)
+    frame["colour"] = [colour_of(r, int(k)) for r in frame["rank_in_book"]]
+    connected = [c for c in X.columns if c.endswith("_connected")]
+    coverage = [
+        json.dumps(
+            {
+                **{f: int(X.at[i, f]) for f in COVERAGE_FEATURES},
+                "sources_connected": int(X.loc[i, connected].sum()) + 1,  # Salesforce always
+            }
+        )
+        for i in X.index
+    ]
 
     out = (
         (
@@ -140,9 +194,12 @@ def score_tenant(
             float(r.arr),
             int(r.days_to_renewal),
             float(r.rank_score),
-            int(r.rank_in_book),
+            None if pd.isna(r.rank_in_book) else int(r.rank_in_book),
             int(k),
             run_id,
+            r.evidence_state,
+            r.colour,
+            coverage[r.Index],
         )
         for r in frame.itertuples()
     )

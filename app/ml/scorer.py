@@ -10,7 +10,7 @@ Every scorer gives the same four answers for a feature matrix ``X`` (columns = `
 - ``to_artifact()``: everything needed to score again, as plain JSON, stored in
   ``model_versions.artifact``. ``scorer_from_artifact`` turns it back into a scorer.
 
-Step 4 adds LightGBM behind the same interface.
+``LightGBMScorer`` is the live model since Step 4; ``LogisticScorer`` stays as the comparison.
 """
 
 from __future__ import annotations
@@ -108,7 +108,136 @@ class LogisticScorer:
         return scorer
 
 
-SCORERS = {LogisticScorer.kind: LogisticScorer}
+class LightGBMScorer:
+    """Gradient-boosted trees, the live model from Step 4 (docs/PLAN.md section 6).
+
+    NULL stays NaN: LightGBM learns which way a missing value should go at each split, and "not
+    connected" is also visible to it through the ``<source>_connected`` flags. Trained at the
+    natural positive rate (no class weights), so probabilities stay calibrated.
+
+    Reproducible: ``deterministic`` with ``force_row_wise`` (deterministic alone is not honoured
+    without it), a fixed seed and a fixed thread count, all stored with the model. The same rows
+    give the same booster text, and so the same model version.
+
+    Reasons: ``booster.predict(pred_contrib=True)`` gives exact per-feature SHAP contributions
+    plus the expected value in its last column, and they add up to the raw margin. No ``shap``
+    package is needed.
+    """
+
+    kind = "lightgbm"
+    NUM_THREADS = 2
+    PARAMS = {
+        "objective": "binary",
+        "learning_rate": 0.05,
+        "num_leaves": 15,
+        "min_data_in_leaf": 200,
+        "feature_fraction": 0.8,
+        "bagging_fraction": 0.8,
+        "bagging_freq": 1,
+        "lambda_l2": 1.0,
+        "deterministic": True,
+        "force_row_wise": True,
+        "seed": 20261016,
+        "num_threads": NUM_THREADS,
+        "verbose": -1,
+    }
+    MAX_ROUNDS = 2000
+    EARLY_STOPPING_ROUNDS = 100
+    DEFAULT_ROUNDS = 300  # used only when there is no validation set to stop on
+
+    def __init__(
+        self,
+        features: tuple[str, ...] | list[str],
+        params: dict | None = None,
+        num_boost_round: int | None = None,
+    ) -> None:
+        self.features = tuple(features)
+        self.params = {**self.PARAMS, **(params or {})}
+        self.num_boost_round = num_boost_round
+        self.booster_text: str | None = None
+        self._booster = None
+
+    def _matrix(self, X: pd.DataFrame) -> np.ndarray:
+        return X.loc[:, list(self.features)].to_numpy(dtype="float64")
+
+    def fit(
+        self,
+        X: pd.DataFrame,
+        y: pd.Series,
+        X_valid: pd.DataFrame | None = None,
+        y_valid: pd.Series | None = None,
+    ) -> LightGBMScorer:
+        """Fit; with a validation set, stop early on it and keep the best number of rounds."""
+        import lightgbm as lgb
+
+        params = dict(self.params)
+        # A small training set (a test fixture) cannot fill leaves of 200 rows.
+        params["min_data_in_leaf"] = int(min(params["min_data_in_leaf"], max(5, len(X) // 20)))
+        names = list(self.features)
+        train = lgb.Dataset(
+            self._matrix(X), label=np.asarray(y, dtype="float64"), feature_name=names
+        )
+        if X_valid is not None and len(X_valid) and len(np.unique(y_valid)) == 2:
+            valid = lgb.Dataset(
+                self._matrix(X_valid), label=np.asarray(y_valid, dtype="float64"), reference=train
+            )
+            booster = lgb.train(
+                params,
+                train,
+                num_boost_round=self.MAX_ROUNDS,
+                valid_sets=[valid],
+                callbacks=[lgb.early_stopping(self.EARLY_STOPPING_ROUNDS, verbose=False)],
+            )
+            self.num_boost_round = int(booster.best_iteration) or self.MAX_ROUNDS
+        else:
+            rounds = self.num_boost_round or self.DEFAULT_ROUNDS
+            booster = lgb.train(params, train, num_boost_round=rounds)
+            self.num_boost_round = rounds
+        self.params = params
+        self.booster_text = booster.model_to_string(num_iteration=self.num_boost_round)
+        self._booster = lgb.Booster(model_str=self.booster_text)
+        return self
+
+    def _model(self):
+        if self._booster is None:
+            import lightgbm as lgb
+
+            self._booster = lgb.Booster(model_str=self.booster_text)
+        return self._booster
+
+    def margin(self, X: pd.DataFrame) -> np.ndarray:
+        return self._model().predict(self._matrix(X), raw_score=True)
+
+    def score(self, X: pd.DataFrame) -> np.ndarray:
+        return 1.0 / (1.0 + np.exp(-self.margin(X)))
+
+    def contributions(self, X: pd.DataFrame) -> tuple[float, pd.DataFrame]:
+        values = self._model().predict(self._matrix(X), pred_contrib=True)
+        expected = float(values[0, -1]) if len(values) else 0.0
+        return expected, pd.DataFrame(values[:, :-1], index=X.index, columns=list(self.features))
+
+    def importance(self) -> dict[str, float]:
+        """Share of total split gain per feature."""
+        gain = self._model().feature_importance(importance_type="gain")
+        total = float(gain.sum()) or 1.0
+        return {f: float(g) / total for f, g in zip(self.features, gain, strict=True)}
+
+    def to_artifact(self) -> dict:
+        return {
+            "features": list(self.features),
+            "params": self.params,
+            "num_boost_round": self.num_boost_round,
+            "booster": self.booster_text,
+        }
+
+    @classmethod
+    def from_artifact(cls, artifact: dict) -> LightGBMScorer:
+        scorer = cls(artifact["features"], artifact["params"], artifact["num_boost_round"])
+        scorer.booster_text = artifact["booster"]
+        return scorer
+
+
+SCORERS = {LogisticScorer.kind: LogisticScorer, LightGBMScorer.kind: LightGBMScorer}
 
 
 def scorer_from_artifact(kind: str, artifact: dict) -> Scorer:

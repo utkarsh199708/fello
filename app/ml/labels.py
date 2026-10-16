@@ -105,14 +105,16 @@ def reconcile_outcomes(outcomes: pd.DataFrame, contracts: pd.DataFrame) -> pd.Da
     return both.drop_duplicates(["account_id", "renewal_date"]).drop(columns="rank")
 
 
-def label_anchors(
+def label_frame(
     anchors: pd.DataFrame,
     contracts: pd.DataFrame,
     outcomes: pd.DataFrame,
     thresholds: dict[UUID, float],
     label_cutoff: datetime,
-) -> pd.Series:
-    """Label each anchor row 1, 0 or NaN (censored). Pure; aligned to ``anchors.index``.
+) -> pd.DataFrame:
+    """Per anchor row: ``label`` (1, 0 or NaN when censored) and ``renewal_date``, the end of
+    the contract the label is about (NaT when the account has no active contract). Pure; aligned
+    to ``anchors.index``. ``renewal_date`` is what the cycle-based split sorts by (task 4.2).
 
     - ``anchors``: tenant_id, account_id, as_of (UTC timestamps).
     - ``contracts``: account_id, cycle_number, start, end (UTC midnights), as from
@@ -125,7 +127,13 @@ def label_anchors(
     ``as_of`` (what the featurizer saw); the label then uses those received by ``label_cutoff``.
     """
     if anchors.empty:
-        return pd.Series(index=anchors.index, dtype="float64")
+        return pd.DataFrame(
+            {
+                "label": pd.Series(dtype="float64"),
+                "renewal_date": pd.Series(dtype="datetime64[ns, UTC]"),
+            },
+            index=anchors.index,
+        )
     rows = anchors[["tenant_id", "account_id", "as_of"]].rename_axis("row").reset_index()
     # One active_contracts call per anchor time: a few hundred Mondays, each a vector operation.
     active = pd.concat(
@@ -149,4 +157,21 @@ def label_anchors(
     lost = decided["stage"] == "closed_lost"
     contracted = decided["renewed_arr"] < (1 - threshold) * decided["prior_arr"]
     labels = pd.Series((lost | contracted).astype("float64").to_numpy(), index=decided["row"])
-    return labels.reindex(anchors.index)  # rows with no visible outcome become NaN
+    renewal = pd.Series(active["end"].to_numpy(), index=active["row"])
+    return pd.DataFrame(
+        {
+            "label": labels.reindex(anchors.index),  # rows with no visible outcome become NaN
+            "renewal_date": renewal.reindex(anchors.index),
+        }
+    )
+
+
+def label_anchors(
+    anchors: pd.DataFrame,
+    contracts: pd.DataFrame,
+    outcomes: pd.DataFrame,
+    thresholds: dict[UUID, float],
+    label_cutoff: datetime,
+) -> pd.Series:
+    """Label each anchor row 1, 0 or NaN (censored). Pure; aligned to ``anchors.index``."""
+    return label_frame(anchors, contracts, outcomes, thresholds, label_cutoff)["label"]

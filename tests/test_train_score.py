@@ -42,16 +42,22 @@ def active_rows():
 
 def test_model_versions_row(seeded):
     (row,) = active_rows()
-    assert row.model_version.startswith("logreg-") and row.kind == "logreg"
+    assert row.model_version.startswith("lightgbm-") and row.kind == "lightgbm"
+    assert row.role == "live"
+    # The tiny history is too short for a 12-month holdout, so no evaluation fit was made,
+    # and the live version says so instead of pointing at one.
+    assert row.validated_by is None and row.metrics["evaluation"].startswith("skipped")
     assert row.feature_set_version == FEATURE_SET_VERSION
     assert row.features == list(FEATURES)
     assert row.train_as_of == CFG.train_as_of and row.label_cutoff == CFG.train_as_of
     assert row.anchor_first <= row.anchor_last < CFG.train_as_of
     assert row.anchor_first.weekday() == 0
     assert set(row.tenant_row_counts) == {str(t) for t in seeded}
-    assert sum(row.tenant_row_counts.values()) == row.metrics["rows"]
-    assert 0 < row.metrics["positives"] < row.metrics["rows"]
-    assert 0.5 < row.metrics["auc_in_sample"] <= 1
+    fit = row.metrics["in_sample"]
+    assert sum(row.tenant_row_counts.values()) == fit["rows"]
+    assert 0 < fit["positives"] < fit["rows"]
+    assert 0.5 < fit["roc_auc"] <= 1
+    assert row.metrics["num_threads"] == row.artifact["params"]["num_threads"]
     assert scorer_from_artifact(row.kind, row.artifact).features == FEATURES
 
 
@@ -92,10 +98,21 @@ def test_score_rows_reconcile(seeded):
             assert float(s.arr) == s.features["arr"]
             assert s.days_to_renewal == s.features["days_to_renewal"]
             assert s.rank_score == pytest.approx(s.probability * float(s.arr))
-            assert s.k == 8 and s.evidence_state == "scored"
+            assert s.k == 8
+            # Thin accounts are scored but not ranked, and shown grey (task 4.5).
+            thin = s.features["account_tenure_days"] < 30 or s.features["total_event_count"] < 5
+            assert s.evidence_state == ("insufficient" if thin else "scored")
+            assert (s.rank_in_book is None) == thin and (s.colour == "grey") == thin
+            if not thin:
+                expected = (
+                    "red" if s.rank_in_book <= 8 else "yellow" if s.rank_in_book <= 24 else "green"
+                )
+                assert s.colour == expected
+            assert s.coverage["total_event_count"] == s.features["total_event_count"]
 
         frame = pd.DataFrame([s._asdict() for s in scores])
-        for _, book in frame.groupby("csm_id"):
+        ranked = frame[frame["evidence_state"] == "scored"]
+        for _, book in ranked.groupby("csm_id"):
             ordered = book.sort_values("rank_in_book")
             assert list(ordered["rank_in_book"]) == list(range(1, len(book) + 1))
             assert ordered["rank_score"].is_monotonic_decreasing

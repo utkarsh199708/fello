@@ -33,9 +33,11 @@ from app.ids import stable_uuid
 from app.ingest.resolve import ingest_watermark
 from app.ml.feature_spec import (
     CONNECTED_FLAGS,
+    DAYS_SINCE_CAP,
     FEATURE_SET_VERSION,
     FEATURE_SOURCE,
     FEATURES,
+    MONTHS_SINCE_CAP,
     PAYMENT_WINDOW,
     THREAD_WINDOW,
     TICKET_PRIOR_WINDOW,
@@ -56,9 +58,9 @@ SNAPSHOT_COLUMNS = (
     "ingest_watermark",
 )
 
-# Columns of FeatureInputs.events. Three payload fields are pulled out: two features need
-# active_users and thread_id, and active_contracts needs renewal_date. Everything else in attrs
-# stays in the database.
+# Columns of FeatureInputs.events: the event's identity and times, then the payload fields a
+# feature reads (canonical shape, after Step 3's schema dispatch). The first eight are required;
+# the rest are optional, so a test can build a frame with only the fields it exercises.
 EVENT_COLUMNS = (
     "account_id",
     "source",
@@ -68,11 +70,36 @@ EVENT_COLUMNS = (
     "active_users",
     "thread_id",
     "renewal_date",
+    "sessions",
+    "seats_used",
+    "seats_purchased",
+    "ticket_id",
+    "status",
+    "priority",
+    "csat",
+    "updated_at",
+    "invoice_id",
+    "direction",
+    "bounce_or_autoreply",
+    "industry",
+    "arr_on_record",
+)
+REQUIRED_EVENT_COLUMNS = EVENT_COLUMNS[:8]
+NUMERIC_EVENT_COLUMNS = (
+    "active_users",
+    "sessions",
+    "seats_used",
+    "seats_purchased",
+    "ticket_id",
+    "csat",
+    "arr_on_record",
 )
 
 # The Salesforce event that reports how a renewal ended. It is an outcome event, so no feature
 # counts it, but its arrival is what moves an account from one contract cycle to the next.
 RENEWAL_EVENT = ("salesforce", "opportunity_stage_changed")
+# prior_contraction: the cycle's ARR fell below this share of the previous cycle's.
+CONTRACTED_SHARE = 0.70
 # Every event that reports a renewal: Salesforce, and Stripe where the tenant has it. Resolve
 # stamps the Stripe ones with the renewal_date of the contract they renew. The two sources are
 # reconciled into one decision per (account, renewal_date) by ``renewal_decisions``.
@@ -172,7 +199,20 @@ def load_feature_inputs(conn: Connection, tenant_id: UUID | str, upto: datetime)
                 SELECT account_id, source, event_type, occurred_at, received_at,
                        (attrs->>'active_users')::int AS active_users,
                        attrs->>'thread_id' AS thread_id,
-                       (attrs->>'renewal_date')::date AS renewal_date
+                       (attrs->>'renewal_date')::date AS renewal_date,
+                       (attrs->>'sessions')::int AS sessions,
+                       (attrs->>'seats_used')::int AS seats_used,
+                       (attrs->>'seats_purchased')::int AS seats_purchased,
+                       (attrs->>'ticket_id')::bigint AS ticket_id,
+                       attrs->>'status' AS status,
+                       attrs->>'priority' AS priority,
+                       (attrs->>'csat')::int AS csat,
+                       (attrs->>'updated_at')::timestamptz AS updated_at,
+                       attrs->>'invoice_id' AS invoice_id,
+                       attrs->>'direction' AS direction,
+                       (attrs->>'bounce_or_autoreply')::boolean AS bounce_or_autoreply,
+                       attrs->>'industry' AS industry,
+                       (attrs->>'arr')::float8 AS arr_on_record
                 FROM normalised_events
                 WHERE tenant_id = :tid AND received_at <= :upto
                 """
@@ -183,8 +223,10 @@ def load_feature_inputs(conn: Connection, tenant_id: UUID | str, upto: datetime)
     )
     events["occurred_at"] = utc(events["occurred_at"])
     events["received_at"] = utc(events["received_at"])
-    events["active_users"] = events["active_users"].astype("float64")
+    for name in NUMERIC_EVENT_COLUMNS:
+        events[name] = events[name].astype("float64")
     events["renewal_date"] = utc(events["renewal_date"])
+    events["updated_at"] = utc(events["updated_at"])
     return FeatureInputs(
         connected_at={source: parse_utc(ts) for source, ts in connected.items()},
         accounts=accounts,
@@ -277,23 +319,79 @@ def compute_features(inputs: FeatureInputs, as_of: datetime) -> pd.DataFrame:
     def count(mask: pd.Series) -> pd.Series:
         return ev[mask].groupby("account_id").size().reindex(ids, fill_value=0)
 
-    out["total_event_count"] = count(pd.Series(True, index=ev.index))
+    def column(name: str) -> pd.Series:
+        """An optional event column, all NaN when the frame does not carry it."""
+        return ev[name] if name in ev else pd.Series(float("nan"), index=ev.index)
 
+    def days_since(mask: pd.Series) -> pd.Series:
+        """Whole days since the newest matching event, capped; the cap when there is none."""
+        newest = ev[mask].groupby("account_id")["occurred_at"].max().reindex(ids)
+        days = (t - newest).dt.days.astype("float64")
+        return days.clip(upper=DAYS_SINCE_CAP).fillna(DAYS_SINCE_CAP)
+
+    # Contract history: did the renewal that opened this cycle shrink the ARR?
+    previous = inputs.contracts.set_index(["account_id", "cycle_number"])["arr"]
+    prior_arr = pd.Series(
+        [
+            previous.get((a, c - 1), float("nan"))
+            for a, c in zip(ids, active["cycle_number"], strict=True)
+        ],
+        index=ids,
+        dtype="float64",
+    )
+    out["prior_contraction"] = (active["arr"] < CONTRACTED_SHARE * prior_arr).astype("float64")
+
+    # Coverage.
+    out["total_event_count"] = count(pd.Series(True, index=ev.index))
+    out["events_90d"] = count(since(90))
+    out["n_sources_with_events_90d"] = (
+        ev[since(90)].groupby("account_id")["source"].nunique().reindex(ids, fill_value=0)
+    )
+
+    # Zendesk. A ticket's state at as_of is its newest snapshot (task 3.1, duplicate kind 2).
     created = is_type("zendesk", "ticket_created")
     recent = count(created & since(TICKET_WINDOW))
     prior = count(created & since(TICKET_WINDOW + TICKET_PRIOR_WINDOW) & ~since(TICKET_WINDOW))
     out["tickets_30d"] = recent
+    out["tickets_90d"] = count(created & since(90))
     # Last 30 days against the monthly pace of the 90 days before. +1 on both sides keeps it
     # defined for quiet accounts: 1.0 means "same pace as before", 3.0 "three times the pace".
     out["ticket_rate_30d_vs_prior_90d"] = (recent + 1) / (prior / 3 + 1)
+    tickets = ev[ev["source"] == "zendesk"].assign(
+        status=column("status"),
+        priority=column("priority"),
+        csat=column("csat"),
+        ticket_id=column("ticket_id"),
+        # Snapshots are ordered by updated_at; a row without one falls back to occurred_at.
+        order_at=ev["updated_at"].fillna(ev["occurred_at"])
+        if "updated_at" in ev
+        else ev["occurred_at"],
+    )
+    state = tickets.sort_values(["order_at", "received_at"]).drop_duplicates(
+        ["account_id", "ticket_id"], keep="last"
+    )
+    out["open_tickets"] = (
+        state[state["status"].isin(["open", "pending"])]
+        .groupby("account_id")
+        .size()
+        .reindex(ids, fill_value=0)
+    )
+    out["high_priority_30d"] = count(
+        created & since(TICKET_WINDOW) & column("priority").isin(["high", "urgent"])
+    )
+    rated = state[state["csat"].notna() & (state["order_at"] > t - pd.Timedelta(days=90))]
+    out["mean_csat_90d"] = rated.groupby("account_id")["csat"].mean().reindex(ids)
+    out["days_since_last_ticket"] = days_since(created)
 
+    # Product: the newest monthly report, and the three before it as the baseline.
     rollups = ev[is_type("product", "usage_rollup_monthly") & since(USAGE_HISTORY_WINDOW)]
     rollups = rollups.sort_values(
         ["account_id", "occurred_at", "received_at"], ascending=[True, False, False]
     )
     position = rollups.groupby("account_id").cumcount()  # 0 is the newest report
     fresh = rollups["occurred_at"] > t - pd.Timedelta(days=USAGE_RECENT_WINDOW)
-    last = rollups[(position == 0) & fresh].set_index("account_id")["active_users"].reindex(ids)
+    newest = rollups[(position == 0) & fresh].set_index("account_id")
+    last = newest["active_users"].reindex(ids)
     baseline = (
         rollups[(position >= 1) & (position <= 3)]
         .groupby("account_id")["active_users"]
@@ -302,15 +400,61 @@ def compute_features(inputs: FeatureInputs, as_of: datetime) -> pd.DataFrame:
     )
     # A missing report is unknown, not zero users, so these stay NULL when a report is missing.
     out["active_users_last_month"] = last
-    out["usage_change_last_month_vs_prior_3"] = ((last - baseline) / baseline).where(baseline > 0)
-
-    out["failed_payments_90d"] = count(
-        is_type("stripe", "invoice.payment_failed") & since(PAYMENT_WINDOW)
+    out["sessions_last_month"] = (
+        newest["sessions"].reindex(ids) if "sessions" in newest else float("nan")
     )
+    out["usage_change_last_month_vs_prior_3"] = ((last - baseline) / baseline).where(baseline > 0)
+    if "seats_used" in newest:
+        used = newest["seats_used"].reindex(ids)
+        bought = newest["seats_purchased"].reindex(ids)
+        out["seat_utilisation"] = (used / bought).where(bought > 0)
+    else:
+        out["seat_utilisation"] = float("nan")
+    active_reports = ev[is_type("product", "usage_rollup_monthly") & (column("active_users") > 0)]
+    last_active = active_reports.groupby("account_id")["occurred_at"].max().reindex(ids)
+    any_report = ev[is_type("product", "usage_rollup_monthly")].groupby("account_id").size()
+    months = ((t - last_active).dt.days / 30.4).round().clip(upper=MONTHS_SINCE_CAP)
+    # No report at all (no workspace yet) is unknown; reports with no activity hit the cap.
+    out["months_since_last_activity"] = months.where(last_active.notna(), MONTHS_SINCE_CAP).where(
+        any_report.reindex(ids).notna()
+    )
+
+    # Stripe. An invoice is unrecovered when it failed and no payment for it has arrived.
+    failed = is_type("stripe", "invoice.payment_failed")
+    out["failed_payments_90d"] = count(failed & since(PAYMENT_WINDOW))
+    invoice = column("invoice_id")
+    paid_ids = set(invoice[is_type("stripe", "invoice.paid")].dropna())
+    open_failure = failed & since(PAYMENT_WINDOW) & ~invoice.isin(paid_ids)
+    out["unrecovered_failure_90d"] = (count(open_failure) > 0).astype("float64")
+    out["days_since_last_failure"] = days_since(failed)
+
+    # Gmail.
     mail = ev[is_type("gmail", "message") & since(THREAD_WINDOW)]
     out["threads_90d"] = (
         mail.groupby("account_id")["thread_id"].nunique().reindex(ids, fill_value=0)
     )
+    message = is_type("gmail", "message")
+    direction = column("direction")
+    last30 = ev[message & since(30)].assign(direction=direction)
+    by_thread = last30.groupby(["account_id", "thread_id"])["direction"].agg(set)
+    unanswered = by_thread[by_thread.map(lambda d: "outbound" in d and "inbound" not in d)]
+    out["outbound_unanswered_30d"] = (
+        unanswered.groupby(level="account_id").size().reindex(ids, fill_value=0)
+    )
+    bounced = column("bounce_or_autoreply").astype("boolean").fillna(False).astype(bool)
+    out["bounce_or_autoreply_90d"] = count(message & since(90) & bounced)
+    out["days_since_last_inbound"] = days_since(message & (direction == "inbound"))
+
+    # Salesforce: gaps in the newest account record (industry, ARR on file). No record yet
+    # counts as both missing.
+    records = ev[is_type("salesforce", "account_upserted")].assign(
+        industry=column("industry"), arr_on_record=column("arr_on_record")
+    )
+    latest = records.sort_values(["occurred_at", "received_at"]).drop_duplicates(
+        "account_id", keep="last"
+    )
+    gaps = latest["industry"].isna().astype(int) + latest["arr_on_record"].isna().astype(int)
+    out["missing_field_count"] = gaps.groupby(latest["account_id"]).sum().reindex(ids, fill_value=2)
 
     for flag, source in CONNECTED_FLAGS.items():
         out[flag] = 1.0 if is_connected(inputs.connected_at, source, as_of) else 0.0

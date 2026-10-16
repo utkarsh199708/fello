@@ -20,7 +20,7 @@ from app.db import tenant_tx
 from app.ingest.resolve import ingest_watermark
 from app.ml.feature_spec import FEATURE_EVENTS, FEATURE_SET_VERSION, FEATURES
 from app.ml.features import (
-    EVENT_COLUMNS,
+    REQUIRED_EVENT_COLUMNS,
     FeatureInputs,
     active_contracts,
     build_features,
@@ -51,7 +51,7 @@ def renewal(account, renewal_date: date, received: datetime):
 
 
 def frame_of(events) -> pd.DataFrame:
-    frame = pd.DataFrame(events, columns=list(EVENT_COLUMNS))
+    frame = pd.DataFrame(events, columns=list(REQUIRED_EVENT_COLUMNS))
     frame["occurred_at"] = utc(frame["occurred_at"])
     frame["received_at"] = utc(frame["received_at"])
     frame["active_users"] = frame["active_users"].astype("float64")

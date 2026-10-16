@@ -24,6 +24,8 @@ COMMANDS = {
     "anchors": "app.ml.cli",
     "train": "app.ml.cli",
     "score": "app.ml.cli",
+    "rescore": "app.ml.rescore",
+    "evaluate": "app.evaluation.evaluate",
     "nightly": "app.jobs.cli",
     "bootstrap": "app.jobs.cli",
     "worker": "app.jobs.worker",

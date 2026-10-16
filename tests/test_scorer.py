@@ -86,4 +86,4 @@ def test_fit_is_deterministic(data):
 
 def test_unknown_kind_is_refused():
     with pytest.raises(ValueError):
-        scorer_from_artifact("lightgbm", {})
+        scorer_from_artifact("xgboost", {})
