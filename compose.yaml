@@ -36,7 +36,10 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: app
     ports:
-      - "127.0.0.1:5432:5432"
+      # DB_PORT (from .env, default 5432) moves the host side when another program holds 5432.
+      # Compose can report this container healthy even when the host binding failed, so check
+      # with `docker compose port db 5432` that the port is really ours.
+      - "127.0.0.1:${DB_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:

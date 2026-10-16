@@ -259,11 +259,17 @@ def test_at_most_one_active_model(database_url):
         " is_active) VALUES (:v, 'logreg', 'fs1', '[]', '{}', now(), now(), now(), now(),"
         " '{}', true)"
     )
+    active = "SELECT model_version FROM model_versions WHERE is_active"
     with db.get_engine("app_batch").connect() as conn:
+        before = conn.execute(sa.text(active)).scalars().all()
+        # An earlier module may have trained and activated a model. Deactivate it inside this
+        # transaction so the first insert is the only active row; the rollback restores it.
+        conn.execute(sa.text("UPDATE model_versions SET is_active = false WHERE is_active"))
         conn.execute(sa.text(row), {"v": "test-1"})
         with pytest.raises(sa.exc.IntegrityError, match="model_versions_one_active"):
             conn.execute(sa.text(row), {"v": "test-2"})
-        conn.rollback()  # leaves model_versions empty for the modules that follow
+        conn.rollback()  # model_versions is left exactly as the earlier modules left it
+        assert conn.execute(sa.text(active)).scalars().all() == before
 
 
 def test_connections_run_in_utc(database_url):
