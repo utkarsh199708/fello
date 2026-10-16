@@ -39,4 +39,4 @@ Date: 2026-10-17. Tasks 3.1 to 3.7 of [../TASKS.md](../TASKS.md). Every kind of 
 ## Verification
 
 - 196 tests pass, of which 28 are new in `tests/test_hardening.py`, and ruff and the format check are clean.
-- The redeploy that puts Step 2's data and Step 3's handlers live is recorded in [0002-host-on-gcp-vm.md](0002-host-on-gcp-vm.md) once done.
+- Live since 2026-10-16 21:52 UTC (commit `0f94757`), with a fresh bootstrap of the messy data. The counts are in [0002-host-on-gcp-vm.md](0002-host-on-gcp-vm.md).

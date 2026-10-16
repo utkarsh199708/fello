@@ -60,6 +60,8 @@ New truth files, which only evaluation may read: `truth/account_mess.csv` (each 
   - It trained `logreg-cae5953e43cf`.
   - The first night succeeded for all five tenants.
 
-## 2.15 deferred
+## 2.15 deferred, then done with Step 3
 
 Redeploying means wiping the live database, because the worker bootstraps only when `model_versions` is empty. That would erase the first unattended `job_runs` row due at 02:00 UTC on 2026-10-17, which is milestone M1's evidence. It would also put 1% replayed events on the live list before Step 3.1 can drop them. So the redeploy waits until after that run has been seen and Step 3 has landed, and the database is wiped once.
+
+Done on 2026-10-16 at 21:52 UTC, together with Step 3, before the first unattended night ran. See [0002-host-on-gcp-vm.md](0002-host-on-gcp-vm.md).

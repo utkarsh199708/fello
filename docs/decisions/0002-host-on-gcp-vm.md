@@ -39,6 +39,21 @@ The first deploy was commit `9a4d20b`. The first bootstrap on the e2-small took 
 
 Weekly anchor snapshots are the slowest stage by far, which supports the first hypothesis in PLAN.md section 11. Memory peaked at about 1.2 GB used, with under 200 MB of swap. No container restarted or was killed for running out of memory. Afterwards the scheduler armed the nightly job at `0 2 * * *` UTC.
 
+## Redeploy with Step 2 data and Step 3 handlers, 2026-10-16 (UTC)
+
+Commit `0f94757`. The database and generated-data volumes were dropped and re-created, because the worker bootstraps only into an empty database. The new feature set (fs3) and generator need a fresh bootstrap anyway. The only rows lost were the five bootstrap `job_runs` rows of the first deploy, before any unattended night had run. `vm-setup.sh` added the keys new to `.env.example` and generated a fresh `PII_HASH_SECRET`.
+
+The bootstrap finished at 21:52 UTC. Anchors took 457 s and training 110 s. Afterwards:
+
+- 193,963 raw rows were loaded.
+- 170,348 events were normalised.
+- 1,426 events were quarantined: 948 `unknown_native_key`, 387 `unknown_domain` and 91 `ambiguous_domain`.
+- 1,668 replays were rejected as `duplicate_event_id`.
+- The model is `logreg-73c27dc9e5c3`.
+- The bootstrap night succeeded for all five tenants, and the gate passed.
+
+The scheduler is armed at `0 2 * * *` UTC, so the first unattended night is 2026-10-17 02:00 UTC.
+
 ## Affects
 
 TASKS.md items 1.15, 2.15 and 7.1 now mean "redeploy to the VM" rather than Railway. D2 (spend) is approved at about $21 a month, and D3 (project and Postgres) is done.
