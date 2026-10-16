@@ -8,11 +8,12 @@ non-empty for both, because a test over empty tables proves nothing.
 1. Under tenant A the runtime role sees no row of tenant B, on every table, in both directions.
 2. With no tenant context the runtime role sees zero rows on every table, including on a pooled
    connection that has just served a tenant.
+3. The write side: a nightly run for tenant A changes no row count of tenant B on any table.
 """
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import sqlalchemy as sa
@@ -152,3 +153,31 @@ def test_no_tenant_context_sees_zero_rows_on_every_table(seeded):
         with engine.begin() as conn:
             conn.execute(sa.text("SELECT set_config('app.tenant_id', '', true)"))
             assert count(conn, table) == 0, table
+
+
+def test_nightly_for_one_tenant_writes_nothing_for_the_other(seeded, database_url):
+    """PLAN section 9: 'nightly for A writes nothing for B', checked on every scoped table.
+
+    Counts come from an admin connection (it bypasses RLS) so a stray write is seen even if the
+    runtime role could not read it back. The guard that A's counts rise keeps the test from
+    passing because the run silently did nothing.
+    """
+    a_id, b_id = seeded
+    tables = scoped_tables()
+
+    def counts(tenant_id) -> dict[str, int]:
+        admin = sa.create_engine(database_url)
+        try:
+            with admin.connect() as conn:
+                return {t: count(conn, t, "WHERE tenant_id = :tid", tid=tenant_id) for t in tables}
+        finally:
+            admin.dispose()
+
+    b_before, a_before = counts(b_id), counts(a_id)
+    runs = run_nightly(NIGHT + timedelta(days=1), tenant=a_id)
+    assert [(r.tenant_id, r.status) for r in runs] == [(a_id, "succeeded")]
+    b_after, a_after = counts(b_id), counts(a_id)
+
+    assert b_after == b_before
+    assert a_after["job_runs"] == a_before["job_runs"] + 1
+    assert a_after["scores"] > a_before["scores"]

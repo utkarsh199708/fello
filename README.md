@@ -23,19 +23,21 @@ Needs uv 0.12.17 or newer and Docker.
 ```bash
 uv sync                          # .venv with Python 3.11 and the locked dependencies
 cp .env.example .env             # dev-only values; .env is gitignored
-docker compose up -d db          # Postgres 16 on 127.0.0.1:5432, data in a named volume
+docker compose up -d db          # Postgres 16 on 127.0.0.1:${DB_PORT:-5432}, data in a named volume
 uv run ruff check .
-uv run pytest                    # database tests create and drop their own fello_test database
+uv run --env-file .env pytest    # database tests create and drop their own fello_test database
 ```
 
-If another program already holds port 5432, Compose fails with "port is already allocated". Start Postgres elsewhere (for example `docker run -d -p 127.0.0.1:55433:5432 -e POSTGRES_PASSWORD=postgres postgres:16`) and point `DATABASE_URL` and `TEST_DATABASE_URL` in `.env` at that port.
+If another program already holds port 5432, set `DB_PORT` in `.env` to a free port (for example `DB_PORT=55433`) and use the same port in `DATABASE_URL` and `TEST_DATABASE_URL`. Check the binding with `docker compose port db 5432`: Compose can report the db healthy even when the host port was taken, and then host-side tools silently reach the other program.
+
+The app reads only process environment variables and never opens `.env` itself, so every command that needs it goes through `uv run --env-file .env`.
 
 Run the whole system on the full dataset (5 tenants, 5,000 accounts, about 194,000 events):
 
 ```bash
-uv run python -m app bootstrap --config config/full.yaml   # about 2 minutes: migrate, generate, load, resolve, anchors, train, first night
-uv run python -m app nightly --as-of 2026-10-13T02:00:00Z  # one more night, a few seconds; run again and it is a no-op
-uv run python -m app web                                   # http://127.0.0.1:8000, password BASIC_AUTH_PASSWORD from .env, username ignored
+uv run --env-file .env python -m app bootstrap --config config/full.yaml   # about 2 minutes: migrate, generate, load, resolve, anchors, train, first night
+uv run --env-file .env python -m app nightly --as-of 2026-10-13T02:00:00Z  # one more night, a few seconds; run again and it is a no-op
+uv run --env-file .env python -m app web                                   # http://127.0.0.1:8000, password BASIC_AUTH_PASSWORD from .env, username ignored
 ```
 
 Or run everything in containers: `docker compose up -d` starts db, web and worker. The worker bootstraps on first start (`BOOTSTRAP_CONFIG`) and then fires the nightly job on `NIGHTLY_CRON` (UTC); set `NIGHTLY_CRON="*/2 * * * *"` in `.env` to watch it fire. `curl localhost:8000/health` shows the model version and the newest job run.
