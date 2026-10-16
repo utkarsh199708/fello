@@ -31,7 +31,8 @@ jobs:
           --health-timeout 5s
           --health-retries 20
     env:
-      DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/app
+      # 127.0.0.1 rather than localhost, to match .env.example (see the note there).
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/app
     steps:
       # Actions are pinned by commit SHA. The comment names the release.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
