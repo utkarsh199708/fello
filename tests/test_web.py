@@ -11,7 +11,7 @@ import pytest
 import sqlalchemy as sa
 from fastapi.testclient import TestClient
 
-from app.db import get_engine, tenant_tx
+from app.db import get_engine, make_engine, tenant_tx
 from tests.helpers import ROOT, purge_tenants, seed_tiny
 
 PASSWORD = "test-web-password"
@@ -174,3 +174,95 @@ def test_importing_web_loads_no_pandas():
     env = {**os.environ, "BASIC_AUTH_PASSWORD": "x", "SESSION_SECRET": "x"}
     result = subprocess.run([sys.executable, "-c", code], cwd=ROOT, env=env)
     assert result.returncode == 0
+
+
+def test_account_page_hides_contract_cycles_after_as_of(client, seeded):
+    """contracts.csv runs ahead of time; a cycle starting after the latest score must not show."""
+    with tenant_tx(seeded[0]) as conn:
+        row = conn.execute(
+            sa.text(
+                "SELECT account_id, cycle_number, start_date, arr FROM contracts "
+                "WHERE start_date > (SELECT max(as_of) FROM scores) LIMIT 1"
+            )
+        ).one()
+        past = (
+            conn.execute(
+                sa.text(
+                    "SELECT start_date FROM contracts WHERE account_id = :a "
+                    "AND start_date <= (SELECT max(as_of) FROM scores)"
+                ),
+                {"a": row.account_id},
+            )
+            .scalars()
+            .all()
+        )
+    switch(client, seeded[0])
+    page = client.get(f"/accounts/{row.account_id}")
+    assert page.status_code == 200
+    assert f'<td class="n">{row.cycle_number}</td>' not in page.text
+
+    assert past and f'<td class="n">{row.cycle_number - 1}</td>' in page.text  # started cycles show
+
+
+def test_unassigned_book_is_reachable(client, seeded, database_url):
+    """Accounts with no CSM are shown under the virtual 'Unassigned' owner."""
+    tid = seeded[0]
+    assert "unassigned" in client.get(f"/switch?tenant_id={tid}").text
+    # The runtime role cannot UPDATE scores, so the test edits one row as the admin user.
+    admin = make_engine(database_url, poolclass=sa.pool.NullPool)
+    with admin.begin() as conn:
+        sid = conn.execute(
+            sa.text(
+                "UPDATE scores SET csm_id = NULL WHERE score_id = ("
+                "SELECT score_id FROM scores WHERE tenant_id = :t "
+                "AND as_of = (SELECT max(as_of) FROM scores WHERE tenant_id = :t) LIMIT 1) "
+                "RETURNING score_id"
+            ),
+            {"t": tid},
+        ).scalar_one()
+    try:
+        r = client.post("/switch", data={"tenant_id": str(tid), "csm_id": "unassigned"})
+        assert r.status_code == 303
+        page = client.get("/list")
+        assert page.status_code == 200 and f"/scores/{sid}" in page.text
+        assert page.text.count("/scores/") == 1
+    finally:
+        with admin.begin() as conn:
+            conn.execute(
+                sa.text(
+                    "UPDATE scores s SET csm_id = a.csm_id FROM accounts a "
+                    "WHERE s.score_id = :s AND a.account_id = s.account_id"
+                ),
+                {"s": sid},
+            )
+        admin.dispose()
+
+
+def test_last_job_run_orders_by_night_not_started_at(seeded, database_url):
+    """A recovery run for an older night starts later but is not the newest run."""
+    from app.web import queries as q
+
+    tid = seeded[0]
+    admin = make_engine(database_url, poolclass=sa.pool.NullPool)
+    insert = sa.text(
+        "INSERT INTO job_runs (run_id, job_name, tenant_id, run_date, as_of, trigger, status, "
+        "started_at) VALUES (gen_random_uuid(), 'nightly', :t, :d, :a, 'cli', 'succeeded', :s)"
+    )
+    nights = [  # (run_date, started_at): the older night started last
+        ("2031-03-10", "2031-03-10T02:00:00Z"),
+        ("2031-03-03", "2031-03-11T09:00:00Z"),
+    ]
+    try:
+        with admin.begin() as conn:
+            for d, started in nights:
+                conn.execute(insert, {"t": tid, "d": d, "a": d + "T00:00:00Z", "s": started})
+        with tenant_tx(tid) as conn:
+            got = q.last_job_run(conn)
+        assert str(got["run_date"]) == "2031-03-10"
+    finally:
+        with admin.begin() as conn:
+            conn.execute(
+                sa.text("DELETE FROM job_runs WHERE tenant_id = :t AND run_date >= '2031-01-01'"),
+                {"t": tid},
+            )
+        admin.dispose()

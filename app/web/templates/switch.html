@@ -15,6 +15,7 @@
   <input type="hidden" name="tenant_id" value="{{ chosen }}">
   <select name="csm_id" required>
     {% for c in csms %}<option value="{{ c.csm_id }}">{{ c.name }} ({{ c.email }})</option>{% endfor %}
+    <option value="unassigned">Unassigned (accounts with no CSM)</option>
   </select>
   <button type="submit">Show my list</button>
 </form>

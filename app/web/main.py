@@ -75,13 +75,15 @@ def create_app() -> FastAPI:
     templates = Jinja2Templates(directory=HERE / "templates")
     templates.env.filters.update(money=_fmt_money, pct=_fmt_pct, num=_fmt_num, ts=_fmt_ts)
 
-    def selected(request: Request) -> tuple[uuid.UUID, uuid.UUID] | None:
-        """The (tenant, csm) in the cookie, or None if there is none or it is malformed."""
+    def selected(request: Request) -> tuple[uuid.UUID, uuid.UUID | str] | None:
+        """The (tenant, csm) in the cookie, or None if there is none or it is malformed.
+
+        The csm is a UUID, or the string ``unassigned`` for the virtual owner of ownerless accounts.
+        """
         try:
-            return (
-                uuid.UUID(request.session["tenant_id"]),
-                uuid.UUID(request.session["csm_id"]),
-            )
+            tenant_id = uuid.UUID(request.session["tenant_id"])
+            raw = request.session["csm_id"]
+            return tenant_id, (raw if raw == q.UNASSIGNED else uuid.UUID(raw))
         except (KeyError, ValueError, TypeError):
             return None
 
@@ -116,17 +118,22 @@ def create_app() -> FastAPI:
     def switch_submit(
         request: Request,
         tenant_id: Annotated[uuid.UUID, Form()],
-        csm_id: Annotated[uuid.UUID, Form()],
+        csm_id: Annotated[str, Form()],
     ) -> Response:
         """Validate the pair inside the tenant's transaction, then write the cookie."""
         with get_engine().connect() as conn:
             known = q.tenant_exists(conn, tenant_id)
         if not known:
             raise HTTPException(404)
-        with tenant_tx(tenant_id) as conn:
-            csm = q.get_csm(conn, csm_id)
-        if csm is None:
-            raise HTTPException(404)
+        if csm_id != q.UNASSIGNED:
+            try:
+                csm_uuid = uuid.UUID(csm_id)
+            except ValueError:
+                raise HTTPException(404) from None
+            with tenant_tx(tenant_id) as conn:
+                csm = q.get_csm(conn, csm_uuid)
+            if csm is None:
+                raise HTTPException(404)
         request.session["tenant_id"] = str(tenant_id)
         request.session["csm_id"] = str(csm_id)
         return RedirectResponse("/list", status_code=303)
@@ -139,7 +146,10 @@ def create_app() -> FastAPI:
         tenant_id, csm_id = ids
         with tenant_tx(tenant_id) as conn:
             tenant = q.tenant_name(conn)
-            csm = q.get_csm(conn, csm_id)
+            if csm_id == q.UNASSIGNED:
+                csm = {"csm_id": None, "name": "Unassigned", "email": ""}
+            else:
+                csm = q.get_csm(conn, csm_id)
             as_of = q.latest_as_of(conn)
             rows = q.ranked_list(conn, csm_id, as_of) if as_of and csm else []
         if csm is None:  # the cookie names a CSM this tenant does not have
@@ -210,9 +220,9 @@ def create_app() -> FastAPI:
             account = q.get_account(conn, account_id)
             if account is None:
                 raise HTTPException(404)
-            contracts = q.account_contracts(conn, account_id)
             scores = q.account_scores(conn, account_id)
             latest = q.latest_as_of(conn)
+            contracts = q.account_contracts(conn, account_id, latest) if latest else []
             timeline = q.account_timeline(conn, account_id, latest) if latest else []
         return templates.TemplateResponse(
             request,
@@ -240,7 +250,10 @@ def create_app() -> FastAPI:
                 with tenant_tx(tid) as conn:
                     accounts += q.account_count(conn)
                     run = q.last_job_run(conn)
-                if run and (last is None or run["started_at"] > last["started_at"]):
+                if run and (
+                    last is None
+                    or (run["run_date"], run["as_of"]) > (last["run_date"], last["as_of"])
+                ):
                     last = run
         except Exception as exc:  # any failure means "not healthy"; report the type only
             return JSONResponse({"status": "down", "db": type(exc).__name__}, status_code=503)

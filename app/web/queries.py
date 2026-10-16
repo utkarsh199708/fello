@@ -69,19 +69,26 @@ def latest_as_of(conn: Connection) -> datetime | None:
     return conn.execute(sa.text("SELECT max(as_of) FROM scores")).scalar_one()
 
 
-def ranked_list(conn: Connection, csm_id: uuid.UUID, as_of: datetime) -> list[dict[str, Any]]:
-    """The CSM's book at ``as_of``, best first. One row per account."""
+UNASSIGNED = "unassigned"  # session value for the virtual owner of accounts with no CSM
+
+
+def ranked_list(conn: Connection, csm_id: uuid.UUID | str, as_of: datetime) -> list[dict[str, Any]]:
+    """The CSM's book at ``as_of``, best first. One row per account.
+
+    ``csm_id == UNASSIGNED`` selects the book of accounts that have no CSM (csm_id NULL).
+    """
+    owner = "s.csm_id IS NULL" if csm_id == UNASSIGNED else "s.csm_id = :c"
     return _rows(
         conn,
-        """
+        f"""
         SELECT s.score_id, s.account_id, a.name AS account, s.rank_in_book, s.probability,
                s.arr, s.days_to_renewal, s.rank_score
         FROM scores s JOIN accounts a USING (account_id)
-        WHERE s.csm_id = :c AND s.as_of = :d
+        WHERE {owner} AND s.as_of = :d
         ORDER BY s.rank_in_book, a.name
         """,
-        c=csm_id,
         d=as_of,
+        **({} if csm_id == UNASSIGNED else {"c": csm_id}),
     )
 
 
@@ -156,12 +163,21 @@ def get_account(conn: Connection, account_id: uuid.UUID) -> dict[str, Any] | Non
     )
 
 
-def account_contracts(conn: Connection, account_id: uuid.UUID) -> list[dict[str, Any]]:
+def account_contracts(
+    conn: Connection, account_id: uuid.UUID, as_of: datetime
+) -> list[dict[str, Any]]:
+    """Cycles that had started by ``as_of``.
+
+    contracts.csv runs ahead of time (it holds cycles up to the horizon), so showing a later
+    cycle would tell a CSM whether, and at what ARR, a renewal will happen before it has.
+    """
     return _rows(
         conn,
         "SELECT cycle_number, start_date, end_date, arr FROM contracts "
-        "WHERE account_id = :a ORDER BY cycle_number DESC",
+        "WHERE account_id = :a AND start_date <= CAST(:as_of AS date) "
+        "ORDER BY cycle_number DESC",
         a=account_id,
+        as_of=as_of,
     )
 
 
@@ -202,6 +218,6 @@ def account_count(conn: Connection) -> int:
 def last_job_run(conn: Connection) -> dict[str, Any] | None:
     return _row(
         conn,
-        "SELECT job_name, run_date, status, trigger, started_at, finished_at "
-        "FROM job_runs ORDER BY started_at DESC LIMIT 1",
+        "SELECT job_name, run_date, as_of, status, trigger, started_at, finished_at "
+        "FROM job_runs ORDER BY run_date DESC, as_of DESC LIMIT 1",
     )
