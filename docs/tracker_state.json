@@ -1,10 +1,18 @@
 {
-  "updated": "2026-10-16",
-  "status": {
-    "0.3": "in_progress"
-  },
+  "updated": "2026-10-16 22:04",
+  "status": {},
   "log": [
-    {"at": "2026-10-16", "msg": "Step 0 done: brief committed first, scaffold second. Task 0.3 waits on Docker Desktop."},
-    {"at": "2026-10-16", "msg": "Agents assigned. Build workflows queued for Steps 1 to 7."}
+    {
+      "at": "2026-10-16",
+      "msg": "Step 0 done: brief committed first, scaffold second. Task 0.3 waits on Docker Desktop."
+    },
+    {
+      "at": "2026-10-16",
+      "msg": "Agents assigned. Build workflows queued for Steps 1 to 7."
+    },
+    {
+      "at": "2026-10-16 22:04",
+      "msg": "0.3 done: Docker repaired (stale socket folders moved aside); compose db starts healthy"
+    }
   ]
 }

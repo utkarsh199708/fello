@@ -37,7 +37,7 @@ After M1, Step 5 (agentic job) can start against the logistic-regression scorer 
   Done when: one page covers the real problem, what to build first, the three disagreements with the VP, and the business questions with assumed defaults.
 - [x] **0.2 Commit the brief alone as the first commit.**
   Done when: `git log` shows it before any code.
-- [ ] **0.3 Scaffold the repo.** `.gitattributes`, `.editorconfig`, `.gitignore`, `.dockerignore`, MIT `LICENSE`, `.env.example`, `pyproject.toml` with `uv.lock`, `Dockerfile` on a pinned slim image with `libgomp1`, `compose.yaml` with db on a named volume, web and worker.
+- [x] **0.3 Scaffold the repo.** `.gitattributes`, `.editorconfig`, `.gitignore`, `.dockerignore`, MIT `LICENSE`, `.env.example`, `pyproject.toml` with `uv.lock`, `Dockerfile` on a pinned slim image with `libgomp1`, `compose.yaml` with db on a named volume, web and worker.
   Done when: `docker compose config` validates and the db service starts.
   Status: all files in place and `docker compose config` validates. Not yet checked: the db service starting, because Docker Desktop was not running.
 - [x] **0.4 Add CI and secret scanning.** GitHub Actions running ruff and pytest against a Postgres service. Gitleaks pre-commit hook. CI runs remotely only after D4.
