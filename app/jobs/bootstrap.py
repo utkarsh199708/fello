@@ -7,7 +7,8 @@ Each step is safe to run again, so a bootstrap that died half-way is finished by
 and a second run of a finished bootstrap changes nothing:
 
 1. ``migrate``: create the database, roles and schema if missing.
-2. ``generate`` the data, unless ``manifest.json`` already records this config's hash.
+2. ``generate`` the data, unless ``manifest.json`` records this config's hash and the
+   current generator version.
 3. Refuse to go on if the database holds tenants that this config does not name. Mixing two
    datasets would put foreign tenants in the nightly loop and break the slug-unique load.
 4. ``load_all``: reference rows ``ON CONFLICT DO NOTHING``; a tenant with events is skipped.
@@ -35,7 +36,7 @@ import sqlalchemy as sa
 
 from app.config import Config, load_config
 from app.db import get_engine, tenant_tx
-from app.generator.generate import generate
+from app.generator.generate import generate, generator_version
 from app.ingest.loader import load_all
 from app.ingest.resolve import resolve
 from app.jobs.nightly import TenantRun, run_nightly
@@ -54,11 +55,18 @@ def step(name: str) -> Iterator[None]:
 
 
 def generated_for(data_dir: Path, cfg: Config) -> bool:
-    """True when ``data_dir`` already holds the output of exactly this config file."""
+    """True when ``data_dir`` holds this config file's output made by the current generator code.
+
+    Both must match: the same config run through an older generator gives different data.
+    """
     manifest = data_dir / "manifest.json"
     if not manifest.exists():
         return False
-    return json.loads(manifest.read_text(encoding="utf-8")).get("config_sha256") == cfg.sha256
+    recorded = json.loads(manifest.read_text(encoding="utf-8"))
+    return (
+        recorded.get("config_sha256") == cfg.sha256
+        and recorded.get("generator_version") == generator_version()
+    )
 
 
 def foreign_tenants(cfg: Config) -> list[str]:

@@ -77,6 +77,27 @@ def _jsonl_bytes(rows: list[dict]) -> bytes:
     return ("\n".join(lines) + "\n").encode("utf-8") if rows else b""
 
 
+GENERATOR_FILES = sorted(Path(__file__).parent.glob("*.py")) + [
+    Path(__file__).parent.parent / "vocab.py",
+    Path(__file__).parent.parent / "ids.py",
+]
+
+
+def generator_version() -> str:
+    """Hash of the code that makes the data, so bootstrap can tell stale data from fresh.
+
+    The config hash alone says the same inputs were used, not that the same code ran: data
+    made by an older generator would be reused. Hashing the source cannot be forgotten the
+    way a hand-bumped version number can. CR is dropped so a Windows checkout and a Linux
+    one give the same value.
+    """
+    digest = hashlib.sha256()
+    for path in GENERATOR_FILES:
+        digest.update(path.name.encode("utf-8") + b"\x00")
+        digest.update(path.read_bytes().replace(b"\r", b""))
+    return digest.hexdigest()
+
+
 def generate(cfg: Config, out_dir: str | Path) -> dict:
     """Generate every file under `out_dir` and return the manifest (also written to disk)."""
     out = Path(out_dir)
@@ -194,6 +215,7 @@ def generate(cfg: Config, out_dir: str | Path) -> dict:
         "config_name": cfg.name,
         "seed": cfg.seed,
         "config_sha256": cfg.sha256,
+        "generator_version": generator_version(),
         "counts": counts,
         "files": {name: hashlib.sha256(data).hexdigest() for name, data in sorted(files.items())},
     }

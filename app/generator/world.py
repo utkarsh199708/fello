@@ -318,6 +318,11 @@ def build_world(cfg: Config, tindex: int) -> World:
         for c in acct.contracts:
             s, e = tu.to_epoch(c.start), tu.to_epoch(c.end)
             in_force = (month_epoch[1:] > s) & (month_epoch[:-1] < e)
+            # Contracts come in cycle order and the renewal month belongs to both. The earlier
+            # contract keeps it, so ticket volume (which scales with ARR) just before a
+            # contraction does not already follow the lower post-renewal ARR: that would leak
+            # the outcome backwards into the features.
+            in_force &= arr_month[acct.index] == 0
             arr_month[acct.index, in_force] = c.arr
 
     return World(

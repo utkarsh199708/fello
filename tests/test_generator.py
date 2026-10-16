@@ -7,11 +7,14 @@ from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from app.config import load_config, parse_utc
-from app.generator.generate import generate
-from app.generator.world import salesforce_id
+from app.generator import timeutil as tu
+from app.generator.generate import generate, generator_version
+from app.generator.world import build_world, salesforce_id
+from app.jobs.bootstrap import generated_for
 from app.vocab import EVENT_TYPES, NATIVE_KEY, SOURCES
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -289,3 +292,42 @@ def test_full_config_lands_near_five_thousand_accounts_and_two_hundred_thousand_
     assert "gmail" not in manifest["counts"]["t2"]
     assert "stripe" not in manifest["counts"]["t3"]
     assert "zendesk" not in manifest["counts"]["t5"]
+
+
+def test_manifest_records_the_generator_version_and_bootstrap_checks_it(tiny):
+    """Data from older generator code must be regenerated even when the config is unchanged."""
+    cfg, out, _ = tiny
+    on_disk = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+    assert on_disk["generator_version"] == generator_version()
+    assert generated_for(out, cfg)
+
+    stale = dict(on_disk, generator_version="0" * 64)
+    (out / "manifest.json").write_text(json.dumps(stale), encoding="utf-8")
+    try:
+        assert not generated_for(out, cfg)
+        without = {k: v for k, v in on_disk.items() if k != "generator_version"}
+        (out / "manifest.json").write_text(json.dumps(without), encoding="utf-8")
+        assert not generated_for(out, cfg)  # a manifest from before the field existed
+    finally:
+        (out / "manifest.json").write_text(json.dumps(on_disk), encoding="utf-8")
+
+
+def test_the_renewal_month_keeps_the_ending_contracts_arr():
+    """No reverse leak: the month holding a renewal date still shows the old contract's ARR.
+
+    Ticket volume scales with ARR in force, so if the new cycle owned this month, tickets
+    just before a contraction would already follow the lower post-renewal ARR.
+    """
+    cfg = load_config(TINY)
+    checked = 0
+    for tindex in range(len(cfg.tenants)):
+        w = build_world(cfg, tindex)
+        for acct in w.accounts:
+            for old, new in zip(acct.contracts, acct.contracts[1:], strict=False):
+                at = tu.to_epoch(new.start)
+                if at in w.month_epoch:
+                    continue  # a renewal on the 1st shares no month between the two cycles
+                month = int(np.searchsorted(w.month_epoch, at, side="right")) - 1
+                assert w.arr_month[acct.index, month] == old.arr
+                checked += 1
+    assert checked > 10
