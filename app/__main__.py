@@ -17,6 +17,7 @@ import sys
 
 COMMANDS = {
     "data": "app.generator.cli",
+    "data-report": "app.generator.report",
     "migrate": "app.migrate",
     "load": "app.ingest.cli",
     "ingest": "app.ingest.cli",

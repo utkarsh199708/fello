@@ -24,7 +24,16 @@ EMAIL_FIELD = {"zendesk": "requester_email", "gmail": "counterpart_email"}
 # Event types per source, with the payload fields each type must carry.
 EVENT_TYPES = {
     "salesforce": {
-        "account_upserted": ("account_id", "name", "website_domain", "owner_email"),
+        # Also carries the ARR custom field, whose name depends on the schema version
+        # (SALESFORCE_ARR_FIELD). industry and that field are null when the CRM has no value.
+        "account_upserted": (
+            "account_id",
+            "name",
+            "website_domain",
+            "owner_email",
+            "industry",
+            "last_modified_date",
+        ),
         "opportunity_stage_changed": (
             "account_id",
             "opportunity_id",
@@ -35,13 +44,16 @@ EVENT_TYPES = {
         ),
     },
     "zendesk": {
+        # A ticket is a mutable object: every change is a full snapshot of its state, and the
+        # newest updated_at wins. A connector re-sync can re-send an unchanged snapshot.
         "ticket_created": (
             "organization_id",
             "ticket_id",
             "requester_email",
             "status",
-            "priority",
+            "priority",  # see ZENDESK_PRIORITY_CODES for how it changes type
             "csat",  # null until the ticket is rated
+            "updated_at",
         ),
         "ticket_updated": (
             "organization_id",
@@ -50,6 +62,7 @@ EVENT_TYPES = {
             "status",
             "priority",
             "csat",
+            "updated_at",
         ),
     },
     "product": {
@@ -80,6 +93,26 @@ EVENT_TYPES = {
         ),
     },
 }
+
+# Schema drift (PLAN.md section 5). Every raw row carries source_schema_version, and these are
+# the differences between versions. A source not listed has only version 1.
+LATEST_SCHEMA_VERSION = {"salesforce": 2, "zendesk": 2, "product": 1, "stripe": 1, "gmail": 1}
+# Zendesk version 1 sent priority as an integer code; version 2 sends the name.
+ZENDESK_PRIORITY_CODES = {"low": 1, "normal": 2, "high": 3, "urgent": 4}
+# Salesforce renamed the ARR custom field on the account record.
+SALESFORCE_ARR_FIELD = {1: "arr__c", 2: "annual_contract_value__c"}
+
+# Payload fields whose name depends on the schema version, on top of EVENT_TYPES.
+VERSIONED_FIELDS = {
+    ("salesforce", "account_upserted"): {v: (f,) for v, f in SALESFORCE_ARR_FIELD.items()},
+}
+
+
+def payload_fields(source: str, event_type: str, version: int) -> tuple[str, ...]:
+    """Every field a payload of this type and schema version carries."""
+    extra = VERSIONED_FIELDS.get((source, event_type), {}).get(version, ())
+    return EVENT_TYPES[source][event_type] + extra
+
 
 # Events that state how a renewal ended. The labeler reads them; the featurizer drops them
 # before computing anything, so a feature can never see the answer.

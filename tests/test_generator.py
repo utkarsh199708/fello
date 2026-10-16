@@ -15,7 +15,7 @@ from app.generator import timeutil as tu
 from app.generator.generate import generate, generator_version
 from app.generator.world import build_world, salesforce_id
 from app.jobs.bootstrap import generated_for
-from app.vocab import EVENT_TYPES, NATIVE_KEY, SOURCES
+from app.vocab import NATIVE_KEY, SOURCES, payload_fields
 
 ROOT = Path(__file__).resolve().parent.parent
 TINY = ROOT / "tests" / "fixtures" / "tiny.yaml"
@@ -120,7 +120,8 @@ def test_payloads_carry_the_fields_the_vocabulary_names(tiny):
     _, out, _ = tiny
     for slug in ("t1", "t2"):
         for event in read_events(out / "events" / f"{slug}.jsonl"):
-            wanted = EVENT_TYPES[event["source"]][event["event_type"]]
+            version = event["source_schema_version"]
+            wanted = payload_fields(event["source"], event["event_type"], version)
             assert set(wanted) == set(event["payload"]), event
 
 

@@ -33,7 +33,19 @@ PURPOSE = {
     "stripe": 6,
     "gmail": 7,
     "lag": 8,
+    # Step 2 streams. New purposes never shift the draws of the ones above.
+    "identity": 9,
+    "planted": 10,
+    "duplicates": 11,
+    "thin": 12,
+    "resend": 13,
 }
+
+FREEMAIL_DEFAULT = "freemail.example"  # the one synthetic personal-mail domain (RFC 2606)
+INDUSTRIES = (
+    "software retail logistics life_sciences finance media manufacturing education energy "
+    "hospitality"
+).split()
 
 FIRST = (
     "alex sam jordan taylor morgan casey riley jamie avery quinn drew blake rowan "
@@ -124,6 +136,22 @@ class Account:
     contracts: list[Contract] = field(default_factory=list)
     renewals: list[Renewal] = field(default_factory=list)
     end_life: datetime | None = None  # churn date, or the horizon end for a live account
+    # Step 2: the structural causes of mess. Each one is also written to data/truth/.
+    industry: str = ""
+    thin: bool = False  # recent and low-touch: no product workspace yet, billed once upfront
+    missing_backref: tuple[str, ...] = ()  # sources whose record carries no Salesforce id
+    personal_contact: str | None = None  # a contact who writes from a personal mail domain
+    shared_domain: bool = False  # another account in the tenant has the same website domain
+    planted: dict | None = None  # a "signals were sitting right there" case
+
+    @property
+    def has_workspace(self) -> bool:
+        return not self.thin
+
+    @property
+    def prepaid(self) -> bool:
+        """Billed once upfront for the year, so Stripe shows no mid-term invoices."""
+        return self.thin
 
 
 @dataclass
@@ -169,6 +197,157 @@ def _build_people(cfg, tcfg, tindex, rng, n_accounts):
             )
         )
     return csms
+
+
+BACKREF_SOURCES = ("stripe", "zendesk")  # records that should carry the Salesforce id
+
+
+def _shape_accounts(cfg: Config, tindex: int, accounts: list[Account]) -> None:
+    """Step 2 structure: industry, thin accounts and identity breaks (PLAN.md section 5).
+
+    Every knob is optional. A config without them (the test fixture) keeps clean identities.
+    """
+    knobs, tcfg, n = cfg.generator, cfg.tenants[tindex], len(accounts)
+    irng = stream(cfg, tindex, "identity")
+    for a, k in zip(accounts, irng.integers(len(INDUSTRIES), size=n), strict=True):
+        a.industry = INDUSTRIES[int(k)]
+
+    # Thin accounts: recent sign-ups that have not set up the product yet and paid upfront.
+    # They are the structural reason some accounts "have almost nothing".
+    thin = knobs.get("thin")
+    if thin:
+        trng = stream(cfg, tindex, "thin")
+        cutoff = cfg.train_as_of - timedelta(days=int(thin["recent_days"]))
+        recent = [a.index for a in accounts if a.start >= cutoff]
+        k = min(len(recent), round(float(thin["share"]) * n))
+        if k:
+            for i in sorted(int(x) for x in trng.choice(recent, size=k, replace=False)):
+                accounts[i].thin = True
+
+    ident = knobs.get("identity")
+    if not ident:
+        return
+    rates = ident.get("missing_backref", {})
+    draws = irng.random((n, len(BACKREF_SOURCES)))
+    personal = irng.random(n) < float(ident.get("personal_contact_rate", 0.0))
+    freemail = ident.get("freemail_domain", FREEMAIL_DEFAULT)
+    for a in accounts:
+        a.missing_backref = tuple(
+            s
+            for j, s in enumerate(BACKREF_SOURCES)
+            if s in tcfg.connected_at and draws[a.index, j] < float(rates.get(s, 0.0))
+        )
+        if personal[a.index]:  # the last contact writes from home
+            a.personal_contact = f"{a.contacts[-1].split('@')[0]}@{freemail}"
+            a.contacts[-1] = a.personal_contact
+
+    # Shared domains: two accounts (a parent and a subsidiary, say) use one website domain,
+    # so mail matched by domain cannot tell them apart.
+    pairs = round(float(ident.get("shared_domain_rate", 0.0)) * n / 2)
+    pool = [a.index for a in accounts if not a.thin]
+    if pairs and len(pool) >= 2 * pairs:
+        chosen = [int(x) for x in irng.choice(pool, size=2 * pairs, replace=False)]
+        for i, j in zip(chosen[0::2], chosen[1::2], strict=True):
+            owner, other = accounts[min(i, j)], accounts[max(i, j)]
+            old = "@" + other.domain
+            other.domain = owner.domain
+            other.contacts = [c.replace(old, "@" + owner.domain) for c in other.contacts]
+            owner.shared_domain = other.shared_domain = True
+
+
+def holdout_window(cfg: Config) -> tuple[datetime, datetime]:
+    """Renewals in (lo, hi] are test cycles: lo is train_as_of minus 12 months (PLAN.md 6)."""
+    return tu.add_months(cfg.train_as_of, -12), cfg.eval_as_of
+
+
+def planted_quota(cfg: Config) -> dict[int, int]:
+    """Spread `planted.count` over the tenants old enough to have a renewal in the holdout.
+
+    Proportional to tenant size, largest remainder, so the split is fixed by the config alone.
+    """
+    total = int(cfg.generator.get("planted", {}).get("count", 0))
+    lo, _ = holdout_window(cfg)
+    eligible = {
+        i: t.accounts
+        for i, t in enumerate(cfg.tenants)
+        if max(cfg.horizon_start, tu.add_months(cfg.train_as_of, -t.history_months)) < lo
+    }
+    if not total or not eligible:
+        return {}
+    weight = sum(eligible.values())
+    exact = {i: total * w / weight for i, w in eligible.items()}
+    quota = {i: math.floor(x) for i, x in exact.items()}
+    leftover = total - sum(quota.values())
+    for i in sorted(exact, key=lambda i: (quota[i] - exact[i], i))[:leftover]:
+        quota[i] += 1
+    return quota
+
+
+def _plant(cfg: Config, tindex: int, accounts: list[Account], health, month_epoch) -> None:
+    """Plant the "signals were sitting right there" cases (PLAN.md section 5).
+
+    Each case is an account whose first renewal in the holdout is above its CSM's median ARR.
+    Its health falls from 10 to 12 weeks before that renewal, which makes tickets rise and
+    usage fall through the ordinary emitters, and the renewal is lost. Clean identities only,
+    so a miss can never be blamed on quarantine.
+    """
+    knobs = cfg.generator.get("planted")
+    quota = planted_quota(cfg).get(tindex, 0)
+    if not knobs or not quota:
+        return
+    prng = stream(cfg, tindex, "planted")
+    lo, hi = holdout_window(cfg)
+
+    books: dict[int, list] = {}
+    for b in accounts:
+        if b.csm is not None:
+            for c in b.contracts:
+                books.setdefault(b.csm, []).append(
+                    (tu.to_epoch(c.start), tu.to_epoch(c.end), c.arr)
+                )
+    book_arrays = {k: np.array(v, dtype=float) for k, v in books.items()}
+
+    candidates = []
+    for a in accounts:
+        if a.csm is None or a.thin or a.shared_domain or a.missing_backref or a.personal_contact:
+            continue
+        r = next((r for r in a.renewals if lo < r.date <= hi), None)
+        if r is None:
+            continue
+        d, book = tu.to_epoch(r.date), book_arrays[a.csm]
+        in_force = book[(book[:, 0] < d) & (book[:, 1] >= d), 2]
+        if r.prior_arr > float(np.median(in_force)):
+            candidates.append((a.index, r.cycle))
+    if not candidates:
+        return
+
+    lead_lo, lead_hi = knobs["lead_weeks"]
+    drop = float(knobs["health_drop"])
+    size = min(quota, len(candidates))
+    for p in sorted(int(x) for x in prng.choice(len(candidates), size=size, replace=False)):
+        i, cycle = candidates[p]
+        a = accounts[i]
+        r = next(r for r in a.renewals if r.cycle == cycle)
+        lead = int(prng.integers(lead_lo, lead_hi + 1))
+        signal = r.date - timedelta(weeks=lead)
+        s_ep, r_ep = tu.to_epoch(signal), tu.to_epoch(r.date)
+        for m in range(len(month_epoch) - 1):
+            m_lo, m_hi = int(month_epoch[m]), int(month_epoch[m + 1])
+            if m_hi <= s_ep or m_lo >= r_ep:
+                continue
+            progress = ((max(m_lo, s_ep) + min(m_hi, r_ep)) / 2 - s_ep) / (r_ep - s_ep)
+            health[i, m] -= drop * (0.5 + 0.5 * progress)  # a decline that deepens
+        r.outcome, r.renewed_arr = "churned", 0.0
+        a.renewals = [x for x in a.renewals if x.cycle <= cycle]
+        a.contracts = [c for c in a.contracts if c.cycle <= cycle]
+        a.end_life = r.date
+        a.planted = {
+            "cycle": cycle,
+            "renewal_date": r.date,
+            "signal_start": signal,
+            "lead_weeks": lead,
+            "cause": "ticket_spike+usage_decline",
+        }
 
 
 def build_world(cfg: Config, tindex: int) -> World:
@@ -239,6 +418,8 @@ def build_world(cfg: Config, tindex: int) -> World:
             )
         )
 
+    _shape_accounts(cfg, tindex, accounts)
+
     # ---- latent health: an AR(1) walk with a per-account drift and rare shocks --------
     hk = knobs["health"]
     hrng = stream(cfg, tindex, "health")
@@ -253,6 +434,8 @@ def build_world(cfg: Config, tindex: int) -> World:
             hk["phi"] * health[:, m - 1] + drift + hrng.normal(0.0, hk["noise_sd"], n) + shock
         )
     activity = hrng.lognormal(0.0, knobs["activity_sigma"], n)
+    thin_scale = knobs.get("thin", {}).get("activity_scale", 1.0)
+    activity = np.where([a.thin for a in accounts], activity * thin_scale, activity)
 
     # ---- renewals: churn depends on health at renewal plus an unobserved factor -------
     rrng = stream(cfg, tindex, "renewals")
@@ -309,6 +492,8 @@ def build_world(cfg: Config, tindex: int) -> World:
             new_arr = round(arr * scale, -1)
             acct.renewals.append(Renewal(cycle, end, outcome, arr, new_arr))
             start, arr, cycle = end, new_arr, cycle + 1
+
+    _plant(cfg, tindex, accounts, health, month_epoch)
 
     start_epoch = np.array([tu.to_epoch(a.start) for a in accounts], dtype=np.int64)
     end_epoch = np.array([tu.to_epoch(a.end_life) for a in accounts], dtype=np.int64)

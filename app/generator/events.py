@@ -18,12 +18,33 @@ from __future__ import annotations
 
 import numpy as np
 
+from app.config import parse_utc
 from app.generator import timeutil as tu
 from app.generator.world import BASE62, World, random_tokens, salesforce_id, sigmoid, stream
+from app.vocab import LATEST_SCHEMA_VERSION, SALESFORCE_ARR_FIELD, ZENDESK_PRIORITY_CODES
 
 HOUR, DAY = 3600, 86400
 
 Raw = tuple[int, str, dict]  # occurred_epoch, event_type, payload
+
+# generator.drift names the instant each source switched to its latest schema version.
+DRIFT_KEYS = {
+    "zendesk": "zendesk_priority_string_from",
+    "salesforce": "salesforce_arr_field_renamed_from",
+}
+
+
+def schema_version(w: World, source: str, epoch: int) -> int:
+    """The payload format a source used at `epoch`.
+
+    Without a drift date the source was always on its latest version. The switch is keyed to
+    occurred_at, a simplification: a real connector changes format by delivery time.
+    """
+    latest = LATEST_SCHEMA_VERSION[source]
+    cut = w.cfg.generator.get("drift", {}).get(DRIFT_KEYS.get(source, ""))
+    if cut and epoch < tu.to_epoch(parse_utc(cut)):
+        return latest - 1
+    return latest
 
 
 def _window(w: World, source: str):
@@ -55,14 +76,24 @@ def salesforce_events(w: World) -> list[Raw]:
     conn = tu.to_epoch(w.tenant.connected_at["salesforce"])
     horizon = tu.to_epoch(w.cfg.horizon_end)
     out: list[Raw] = []
+    missing_rate = float(knobs.get("missing_field_rate", 0.0))
 
     def upsert(a, t):
         owner = w.csms[a.csm].email if a.csm is not None else ""
+        industry = a.industry
+        arr = float(w.arr_month[a.index, _month_of(w, t)])
+        if missing_rate:  # the CRM record has gaps: no industry, or no ARR on file
+            gaps = rng.random(2) < missing_rate
+            industry = None if gaps[0] else industry
+            arr = None if gaps[1] else arr
         payload = {
             "account_id": a.salesforce_id,
             "name": a.name,
             "website_domain": a.domain,
             "owner_email": owner,
+            "industry": industry,
+            SALESFORCE_ARR_FIELD[schema_version(w, "salesforce", t)]: arr,
+            "last_modified_date": tu.iso(t),
         }
         out.append((t, "account_upserted", payload))
 
@@ -112,16 +143,53 @@ def zendesk_events(w: World) -> list[Raw]:
 
     seen = w.health + rng.normal(0.0, k["noise_sd"], w.health.shape)
     size = np.power(np.maximum(w.arr_month, 1.0) / segment["arr_median"], k["size_exponent"])
-    lam = k["tickets_per_month"] * w.activity[:, None] * size * np.exp(-k["health_coef"] * seen)
-    counts = rng.poisson(lam * frac)
+    base = k["tickets_per_month"] * w.activity[:, None] * size
+    counts = rng.poisson(base * np.exp(-k["health_coef"] * seen) * frac)
+    spans = [
+        (i, m, lo[i, m], hi[i, m], counts[i, m]) for i, m in zip(*np.nonzero(counts), strict=True)
+    ]
+
+    # Confounder: new accounts file a burst of setup tickets in their first weeks whatever
+    # their health, so a ticket spike alone is not a churn signal.
+    boost = float(k.get("onboarding_multiplier", 1.0))
+    if boost > 1.0:
+        on_lo = np.maximum(lo, w.start_epoch[:, None])
+        on_hi = np.minimum(hi, (w.start_epoch + int(k["onboarding_days"]) * DAY)[:, None])
+        length = (w.month_epoch[1:] - w.month_epoch[:-1])[None, :]
+        extra = rng.poisson(base * (boost - 1.0) * np.clip(on_hi - on_lo, 0, None) / length)
+        spans += [
+            (i, m, on_lo[i, m], on_hi[i, m], extra[i, m])
+            for i, m in zip(*np.nonzero(extra), strict=True)
+        ]
+    spans.sort(key=lambda s: (s[0], s[1], s[2]))
+
+    resend_rate = float(w.cfg.generator.get("duplicates", {}).get("resend_rate", 0.0))
+    srng = stream(w.cfg, w.tindex, "resend")
 
     out: list[Raw] = []
     ticket_id = 10_000
     priorities = ["low", "normal", "high", "urgent"]
-    for i, m in zip(*np.nonzero(counts), strict=True):
+
+    def snapshot(t, a, tid, email, status, priority, csat, kind):
+        version = schema_version(w, "zendesk", t)
+        return (
+            t,
+            kind,
+            {
+                "organization_id": a.zendesk_org,
+                "ticket_id": tid,
+                "requester_email": email,
+                "status": status,
+                "priority": ZENDESK_PRIORITY_CODES[priority] if version == 1 else priority,
+                "csat": csat,
+                "updated_at": tu.iso(t),
+            },
+        )
+
+    for i, m, span_lo, span_hi, count in spans:
         a = w.accounts[i]
         stop = min(int(w.end_epoch[i]), horizon)
-        for t0 in _times(rng, lo[i, m], hi[i, m], counts[i, m]):
+        for t0 in _times(rng, span_lo, span_hi, count):
             ticket_id += 1
             email = a.contacts[int(rng.integers(len(a.contacts)))]
             priority = priorities[int(rng.choice(4, p=[0.2, 0.55, 0.2, 0.05]))]
@@ -141,20 +209,24 @@ def zendesk_events(w: World) -> list[Raw]:
                     break
                 if status == "solved" and rng.random() < 0.4:
                     csat = int(np.clip(round(3.6 + 0.6 * w.health[i, m] + rng.normal()), 1, 5))
-                out.append(
-                    (
-                        t,
-                        "ticket_created" if step == 0 else "ticket_updated",
-                        {
-                            "organization_id": a.zendesk_org,
-                            "ticket_id": ticket_id,
-                            "requester_email": email,
-                            "status": status,
-                            "priority": priority,
-                            "csat": csat,
-                        },
-                    )
-                )
+                kind = "ticket_created" if step == 0 else "ticket_updated"
+                out.append(snapshot(t, a, ticket_id, email, status, priority, csat, kind))
+                # Duplicate kind 2: a re-sync re-sends the same state with a newer updated_at.
+                if resend_rate and srng.random() < resend_rate:
+                    t_again = t + int(srng.uniform(10 * 60, 2 * DAY))
+                    if t_again <= stop:
+                        out.append(
+                            snapshot(
+                                t_again,
+                                a,
+                                ticket_id,
+                                email,
+                                status,
+                                priority,
+                                csat,
+                                "ticket_updated",
+                            )  # fmt: skip
+                        )
     return out
 
 
@@ -172,7 +244,10 @@ def product_events(w: World) -> list[Raw]:
     used = np.maximum(1, np.round(purchased * np.clip(sigmoid(1.2 + 0.8 * seen), 0.05, 1.0)))
     share = np.clip(sigmoid(0.3 + 1.0 * seen + rng.normal(0.0, 0.3, shape)), 0.02, 1.0)
     active = np.round(used * share).astype(int)
-    sessions = np.round(active * rng.uniform(6, 16, shape)).astype(int)
+    # Confounder: busy accounts use more and also file more tickets (the same activity
+    # multiplier drives Zendesk volume), so raw ticket counts track size, not risk.
+    busy = np.power(w.activity, float(k.get("activity_exponent", 0.0)))[:, None]
+    sessions = np.round(active * rng.uniform(6, 16, shape) * busy).astype(int)
     actions = np.round(sessions * rng.uniform(1.5, 4.5, shape)).astype(int)
     keep = rng.random(shape) >= k["dropout"]  # the connector sometimes misses a month
 
@@ -184,6 +259,7 @@ def product_events(w: World) -> list[Raw]:
         & (stamp >= conn)
         & (w.arr_month > 0)
         & keep
+        & np.array([a.has_workspace for a in w.accounts])[:, None]
     )
     out: list[Raw] = []
     for i, m in zip(*np.nonzero(live), strict=True):
@@ -222,7 +298,7 @@ def stripe_events(w: World) -> list[Raw]:
     for a in w.accounts:
         subscription = "sub_" + next(sub_tokens)
         stop = min(int(w.end_epoch[a.index]), horizon)
-        for c in a.contracts:
+        for c in a.contracts if not a.prepaid else ():
             for j in range(1, 12 // interval + 1):
                 if j * interval >= 12:
                     break  # the invoice at term end belongs to the renewal, not mid-term

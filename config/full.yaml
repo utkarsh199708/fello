@@ -88,7 +88,7 @@ generator:
     shock_max: 1.6
   churn:                         # logit(churn) = intercept + health_coef * health + unobserved
     health_coef: -1.6
-    unobserved_sd: 1.0
+    unobserved_sd: 1.5             # about 21% of churn then shows no signal (target 20-25%)
   contraction:                   # separate draw, given the account did not churn
     intercept: -1.9
     health_coef: -1.0
@@ -104,14 +104,18 @@ generator:
     startup: {arr_median: 5000, arr_sigma: 0.5, seat_price: 240, invoice_months: 1}
   salesforce:
     upserts_per_month: 0.08
+    missing_field_rate: 0.10       # industry or the ARR field is blank on a record
   zendesk:
     noise_sd: 0.4
-    tickets_per_month: 0.125
+    tickets_per_month: 0.11           # 0.125 before the onboarding burst was added
     health_coef: 0.9
     size_exponent: 0.3
+    onboarding_multiplier: 3.0     # confounder: setup tickets in the first weeks
+    onboarding_days: 60
   product:
     noise_sd: 0.3
     dropout: 0.05
+    activity_exponent: 0.5         # confounder: busy accounts use more and ticket more
   stripe:
     noise_sd: 0.3
     fail_intercept: -3.6
@@ -121,6 +125,28 @@ generator:
     noise_sd: 0.4
     messages_per_month: 0.29
     health_coef: 0.5
+  # ---- Step 2: the mess (PLAN.md section 5). Every knob below is optional; without it the
+  # generator emits clean data, which is what tests/fixtures/tiny.yaml relies on.
+  thin:                          # recent, low-touch accounts: no product workspace, paid upfront
+    share: 0.08                  # of all accounts, picked among those started recently
+    recent_days: 150
+    activity_scale: 0.15
+  identity:                      # where the five systems fail to agree on who a customer is
+    missing_backref: {stripe: 0.035, zendesk: 0.035}   # record carries no Salesforce id
+    personal_contact_rate: 0.05  # one contact writes from freemail_domain
+    shared_domain_rate: 0.004    # accounts that share a website domain with another account
+    freemail_domain: freemail.example
+  planted:                       # "signals were sitting right there" regression cases
+    count: 10                    # across tenants old enough to have holdout renewals
+    lead_weeks: [10, 12]         # health starts falling this long before the lost renewal
+    health_drop: 2.5
+  drift:                         # the instant each source moved to its latest payload format
+    zendesk_priority_string_from: "2024-10-07T00:00:00Z"        # year 2: integer -> name
+    salesforce_arr_field_renamed_from: "2025-10-06T00:00:00Z"   # year 3: arr__c renamed
+  duplicates:
+    replay_rate: 0.01            # kind 1: the same event (same id) delivered again
+    replay_delay_hours: [1, 72]
+    resend_rate: 0.03            # kind 2: a ticket snapshot re-sent with a newer updated_at
   lag:                           # received_at - occurred_at: exponential plus a late tail
     salesforce: {mean_hours: 6, tail_prob: 0.02, tail_days: [1, 4]}
     zendesk: {mean_hours: 4, tail_prob: 0.05, tail_days: [1, 7]}
