@@ -1,0 +1,12 @@
+# Keep the build context to what the image runs: .gitignore, plus git, CI, tests and docs.
+.git
+.github
+.venv
+data
+.env
+.env.*
+**/__pycache__
+.pytest_cache
+.ruff_cache
+tests
+docs

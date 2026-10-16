@@ -1,0 +1,14 @@
+# Generated data is never committed. The config, seed and output hashes are.
+# Anchored to the repo root so it cannot hide a package directory named data.
+/data/
+
+# Secrets. .env.example is the committed template.
+.env
+.env.*
+!.env.example
+
+# Python
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/

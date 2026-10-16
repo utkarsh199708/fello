@@ -1,0 +1,48 @@
+# Local stack: Postgres, plus web and worker built from one image with different commands.
+# `docker compose up -d db` starts the database on its own. web and worker start once
+# Step 1 adds `python -m app web` and `python -m app worker`.
+name: monday-list
+
+x-app: &app
+  build: .
+  image: monday-list:local
+  env_file:
+    - path: .env
+      required: false
+  environment:
+    # Overrides the host-side value in .env: inside Compose the database is the db service.
+    DATABASE_URL: postgresql+psycopg://postgres:postgres@db:5432/app
+  depends_on:
+    db:
+      condition: service_healthy
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      # Local development only. Ports are bound to 127.0.0.1, never the LAN.
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: app
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d app"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  web:
+    <<: *app
+    command: ["python", "-m", "app", "web"]
+    ports:
+      - "127.0.0.1:8000:8000"
+
+  worker:
+    <<: *app
+    command: ["python", "-m", "app", "worker"]
+
+volumes:
+  pgdata:

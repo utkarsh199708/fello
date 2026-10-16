@@ -1,0 +1,8 @@
+# Text files are stored and checked out with LF on every OS, so files written on
+# Windows hash the same as files written in the Linux image (docs/PLAN.md section 5).
+* text=auto eol=lf
+
+# Never rewrite these bytes. static/htmx.min.js must match the sha256 in the README.
+static/htmx.min.js binary
+*.png binary
+*.pptx binary
