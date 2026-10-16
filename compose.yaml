@@ -1,6 +1,10 @@
 # Local stack: Postgres, plus web and worker built from one image with different commands.
-# `docker compose up -d db` starts the database on its own. web and worker start once
-# Step 1 adds `python -m app web` and `python -m app worker`.
+# `docker compose up -d db` starts the database on its own. `docker compose up -d` adds:
+# - worker: `python -m app worker`. Migrates, bootstraps on first start (when model_versions is
+#   empty) from BOOTSTRAP_CONFIG into DATA_DIR, then fires the nightly job on NIGHTLY_CRON (UTC).
+# - web: `python -m app web` on port 8000. It never migrates: the worker does that on start.
+# Secrets (role passwords, SESSION_SECRET, BASIC_AUTH_PASSWORD) come from .env, copied from
+# .env.example. Set NIGHTLY_CRON="*/2 * * * *" in .env to watch the worker fire locally.
 name: monday-list
 
 x-app: &app
@@ -12,6 +16,13 @@ x-app: &app
   environment:
     # Overrides the host-side value in .env: inside Compose the database is the db service.
     DATABASE_URL: postgresql+psycopg://postgres:postgres@db:5432/app
+    # Non-secret settings, with the .env value (or the default) interpolated by Compose.
+    BOOTSTRAP_CONFIG: ${BOOTSTRAP_CONFIG:-config/full.yaml}
+    # Inside the image the generator writes next to the code; the Dockerfile makes it writable.
+    DATA_DIR: /srv/data
+    NIGHTLY_CRON: ${NIGHTLY_CRON:-0 2 * * *}
+    CLOCK_OVERRIDE: ${CLOCK_OVERRIDE:-}
+    PORT: ${PORT:-8000}
   depends_on:
     db:
       condition: service_healthy
@@ -43,6 +54,9 @@ services:
   worker:
     <<: *app
     command: ["python", "-m", "app", "worker"]
+    # A crash, or a first bootstrap that died half-way, is retried; every step is idempotent.
+    # Keep one worker: a second replica would be a second scheduler.
+    restart: unless-stopped
 
 volumes:
   pgdata:
