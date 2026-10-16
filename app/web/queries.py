@@ -222,6 +222,29 @@ def account_timeline(
 # ---- health ----------------------------------------------------------------------------------
 
 
+def data_quality(conn: Connection) -> dict[str, Any]:
+    """What the scores could not use, for the tenant in context (task 3.5).
+
+    ``quarantined``: events no account could be found for, by reason. ``rejected``: replays and
+    payloads no schema version could read, by reason. ``matched``: events that reached the model.
+    Row-level security limits every count to the tenant in context.
+    """
+
+    def by_reason(table: str) -> dict[str, int]:
+        sql = f"SELECT reason, count(*) AS n FROM {table} GROUP BY reason ORDER BY reason"  # noqa: S608
+        return {r["reason"]: r["n"] for r in _rows(conn, sql)}
+
+    quarantined, rejected = by_reason("quarantine"), by_reason("rejects")
+    matched = conn.execute(sa.text("SELECT count(*) FROM normalised_events")).scalar_one()
+    return {
+        "matched": matched,
+        "quarantined": quarantined,
+        "rejected": rejected,
+        "quarantined_total": sum(quarantined.values()),
+        "rejected_total": sum(rejected.values()),
+    }
+
+
 def account_count(conn: Connection) -> int:
     return conn.execute(sa.text("SELECT count(*) FROM accounts")).scalar_one()
 

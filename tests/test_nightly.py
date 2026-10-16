@@ -63,10 +63,14 @@ def test_one_job_runs_row_per_tenant(seeded):
         assert set(row.counts) == {
             "events_normalised",
             "events_quarantined",
+            "events_rejected",
+            "rejected_by_reason",
             "snapshots_written",
             "accounts_scored",
+            "gate",  # every value the data-quality gate measured (task 3.6)
+            "mean_probability",
         }
-        assert set(row.stage_ms) == {"ingest", "snapshot", "score"}
+        assert set(row.stage_ms) == {"ingest", "snapshot", "score", "gate"}
 
         # The counts are the rows this night actually wrote.
         resolved = count(

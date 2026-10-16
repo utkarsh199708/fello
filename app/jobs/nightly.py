@@ -6,11 +6,13 @@ own, all inside ``tenant_tx`` so row-level security binds every read and write:
 1. **Claim.** Insert the tenant's ``job_runs`` row for ``run_date = as_of.date()`` with status
    ``running``. The row is unique on (job_name, tenant_id, run_date). If it already exists and
    ``succeeded``, nothing is written and the tenant's result is ``no_op``: a night that has rows
-   is never rewritten. A ``failed`` row, or a ``running`` row left behind by a crash, is claimed
-   again and re-executed under the same ``run_id``.
-2. **Work.** ``resolve`` the events received by ``as_of``, write the nightly snapshot, score it.
-   One transaction, so a failure part-way leaves no half-written night behind.
-3. **Finish.** Record ``succeeded`` or ``failed`` with counts, stage timings and the error text.
+   is never rewritten. A ``failed`` or ``blocked`` row, or a ``running`` row left behind by a
+   crash, is claimed again and re-executed under the same ``run_id``.
+2. **Work.** ``resolve`` the events received by ``as_of``, write the nightly snapshot, score it,
+   then run the data-quality gate (``app.jobs.gate``). One transaction, so a failure part-way, or
+   a tripped gate, leaves no half-written night behind: nothing of that night is published.
+3. **Finish.** Record ``succeeded``, ``blocked`` (the gate tripped; the reason is in ``error`` and
+   every measured value in ``counts.gate``) or ``failed`` with counts, stage timings and the error.
    This is a separate transaction so that a failed night is still recorded after the work rolled
    back.
 
@@ -36,6 +38,7 @@ from sqlalchemy.engine import Connection
 from app.db import tenant_ids, tenant_tx
 from app.ids import stable_uuid
 from app.ingest.resolve import ingest_watermark, resolve
+from app.jobs.gate import GateTripped, run_checks
 from app.ml.features import write_snapshots
 from app.ml.score import active_model, score_tenant
 
@@ -55,7 +58,7 @@ CLAIM_SQL = sa.text(
     SET status = 'running', as_of = EXCLUDED.as_of, trigger = EXCLUDED.trigger,
         model_version = NULL, ingest_watermark = NULL, counts = '{}', stage_ms = '{}',
         error = NULL, started_at = now(), finished_at = NULL
-    WHERE job_runs.status IN ('failed', 'running')
+    WHERE job_runs.status IN ('failed', 'blocked', 'running')
     RETURNING run_id
     """
 )
@@ -73,7 +76,7 @@ FINISH_SQL = sa.text(
 
 @dataclass(frozen=True)
 class TenantRun:
-    """What happened to one tenant: ``succeeded``, ``failed`` or ``no_op``."""
+    """What happened to one tenant: ``succeeded``, ``blocked``, ``failed`` or ``no_op``."""
 
     tenant_id: UUID
     run_id: UUID
@@ -128,6 +131,12 @@ def run_tenant(tenant_id: UUID, as_of: datetime, trigger: str) -> TenantRun:
         with tenant_tx(tenant_id) as conn:
             do_work(conn, tenant_id, as_of, run_id, result)
         status, error = "succeeded", None
+    except GateTripped as tripped:
+        # Rolled back like a failure, but the measurements are the point: keep them on the row.
+        log.warning("nightly %s: blocked by the data-quality gate: %s", tenant_id, tripped)
+        result.watermark = None
+        result.counts = {"gate": tripped.result.checks, **result.counts}
+        status, error = "blocked", f"data-quality gate: {tripped}"
     except Exception as exc:
         log.exception("nightly %s: work failed", tenant_id)
         # The work transaction rolled back, so its counts describe nothing that was kept.
@@ -189,9 +198,28 @@ def do_work(
     result.counts = {
         "events_normalised": resolved.normalised,
         "events_quarantined": resolved.quarantined,
+        "events_rejected": resolved.rejected,
+        "rejected_by_reason": resolved.by_reject,
         "snapshots_written": snapshots,
         "accounts_scored": scored,
     }
+
+    started = perf_counter()
+    gate = run_checks(
+        conn,
+        tenant_id,
+        as_of,
+        run_id,
+        resolved=resolved.normalised + resolved.quarantined,
+        quarantined=resolved.quarantined,
+        model_version=result.model_version,
+    )
+    result.stage_ms["gate"] = elapsed_ms(started)
+    if not gate.passed:
+        raise GateTripped(gate)
+    result.counts["gate"] = gate.checks
+    # The next night compares its mean against this one (gate check mean_shift).
+    result.counts["mean_probability"] = gate.checks["mean_probability"]
 
 
 def finish(

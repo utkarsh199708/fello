@@ -40,7 +40,8 @@ def test_monday_anchors():
 def outcome(account, stage="closed_won", prior=100.0, renewed=100.0, renewal=RENEWAL, **kw):
     received = kw.get("received", datetime(2026, 6, 1, 12, tzinfo=UTC))
     source, event_type = kw.get("kind", ("salesforce", "opportunity_stage_changed"))
-    return (account, source, event_type, received, stage, renewal, prior, renewed)
+    arr_usd = kw.get("arr_usd")
+    return (account, source, event_type, received, stage, renewal, prior, renewed, arr_usd)
 
 
 def label_one(outcomes, tenant=T1, as_of=ANCHOR, thresholds=None):
@@ -62,6 +63,7 @@ def label_one(outcomes, tenant=T1, as_of=ANCHOR, thresholds=None):
         "renewal_date",
         "prior_arr",
         "renewed_arr",
+        "arr_usd",
     ]
     frame = pd.DataFrame([outcome(a, **o) for o in outcomes], columns=columns)
     frame["received_at"] = utc(frame["received_at"])
@@ -94,11 +96,35 @@ def test_threshold_is_per_tenant():
         [],  # renewal not decided yet
         [{"received": CUTOFF + timedelta(seconds=1)}],  # decided, but arrived after the cutoff
         [{"renewal": date(2025, 6, 1)}],  # an outcome for another renewal
-        [{"kind": ("stripe", "subscription.deleted")}],  # Stripe is ignored until task 3.1
+        # Stripe reported, but resolve could not tie it to a contract: no renewal_date.
+        [{"kind": ("stripe", "subscription.deleted"), "renewal": None}],
     ],
 )
 def test_censored_rows_are_nan(outcomes):
     assert pd.isna(label_one(outcomes))
+
+
+STRIPE_DELETED = ("stripe", "subscription.deleted")
+STRIPE_UPDATED = ("stripe", "subscription.updated")
+
+
+@pytest.mark.parametrize(
+    ("outcomes", "expected"),
+    [
+        # Only Stripe reported the renewal: its events are translated (task 3.1).
+        ([{"kind": STRIPE_DELETED, "stage": None, "prior": None, "renewed": None}], 1.0),
+        ([{"kind": STRIPE_UPDATED, "stage": None, "prior": None, "arr_usd": 60.0}], 1.0),
+        ([{"kind": STRIPE_UPDATED, "stage": None, "prior": None, "arr_usd": 95.0}], 0.0),
+        # Both reported: one outcome, and Salesforce, the system of record, wins.
+        ([{}, {"kind": STRIPE_DELETED, "stage": None}], 0.0),
+        (
+            [{"stage": "closed_lost", "renewed": 0.0}, {"kind": STRIPE_UPDATED, "arr_usd": 100.0}],
+            1.0,
+        ),
+    ],
+)
+def test_salesforce_and_stripe_reconcile_to_one_outcome(outcomes, expected):
+    assert label_one(outcomes) == expected
 
 
 def test_the_label_is_the_next_renewal_after_the_anchor():

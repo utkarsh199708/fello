@@ -26,7 +26,7 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.db import get_engine, tenant_tx
-from app.ml.feature_spec import FEATURE_EVENTS, FEATURES
+from app.ml.feature_spec import FEATURE_EVENTS, FEATURE_SOURCE, FEATURES
 from app.web import queries as q
 from app.web.auth import make_basic_auth, required_password
 
@@ -47,6 +47,20 @@ def _fmt_num(value: Any) -> str:
     if value is None:
         return "n/a"
     return f"{float(value):,.3f}".rstrip("0").rstrip(".")
+
+
+def missing_reason(feature: str, values: dict[str, Any]) -> str | None:
+    """Why a feature is NULL, in words. None when it has a value.
+
+    NULL never means zero (task 3.3): a source the tenant has not connected is named as such, so
+    the page never reads "0 tickets" for an organisation without Zendesk.
+    """
+    if values.get(feature) is not None:
+        return None
+    source = FEATURE_SOURCE.get(feature)
+    if source is not None and values.get(f"{source}_connected") == 0:
+        return f"{source.title()} not connected"
+    return "no data yet"
 
 
 def _fmt_ts(value: Any) -> str:
@@ -152,12 +166,13 @@ def create_app() -> FastAPI:
                 csm = q.get_csm(conn, csm_id)
             as_of = q.latest_as_of(conn)
             rows = q.ranked_list(conn, csm_id, as_of) if as_of and csm else []
+            quality = q.data_quality(conn)
         if csm is None:  # the cookie names a CSM this tenant does not have
             return to_switcher()
         return templates.TemplateResponse(
             request,
             "list.html",
-            {"tenant": tenant, "csm": csm, "as_of": as_of, "rows": rows},
+            {"tenant": tenant, "csm": csm, "as_of": as_of, "rows": rows, "quality": quality},
         )
 
     @app.get("/scores/{score_id}", response_class=HTMLResponse)
@@ -175,6 +190,7 @@ def create_app() -> FastAPI:
             {
                 "name": f,
                 "value": values.get(f),
+                "missing": missing_reason(f, values),
                 "contribution": contributions.get(f, 0.0),
                 "has_events": FEATURE_EVENTS[f] is not None,
             }

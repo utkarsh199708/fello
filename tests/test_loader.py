@@ -19,6 +19,7 @@ from app.db import get_engine, tenant_tx
 from app.generator.generate import generate
 from app.ingest import cli
 from app.ingest.loader import load_all, load_events, load_reference
+from app.ingest.pii import PII_EMAIL_FIELDS, scrub, tenant_key
 from tests.helpers import TINY, load_tiny, purge_tenants
 
 
@@ -77,11 +78,12 @@ def test_load_all_inserts_every_row_and_a_second_load_inserts_none(world):
             assert count(conn, "raw_events") == first["events"][t.slug]
 
 
-def test_raw_events_keep_every_field_as_received(world):
+def test_raw_events_keep_every_field_as_received_except_addresses(world):
     cfg, out = world
     load_all(out)
     t = cfg.tenants[0]
     expected = jsonl_events(out / "events" / f"{t.slug}.jsonl")
+    key = tenant_key(t.tenant_id)
     with tenant_tx(t.tenant_id) as conn:
         rows = conn.execute(
             sa.text(
@@ -97,7 +99,13 @@ def test_raw_events_keep_every_field_as_received(world):
         assert row.event_type == event["event_type"]
         assert row.occurred_at.isoformat() == event["occurred_at"].replace("Z", "+00:00")
         assert row.received_at.isoformat() == event["received_at"].replace("Z", "+00:00")
-        assert row.payload == event["payload"]
+        # Every field as received, except that addresses are pseudonymised (task 3.4).
+        assert row.payload == scrub(event["payload"], key)
+        for field in PII_EMAIL_FIELDS:
+            if isinstance(event["payload"].get(field), str):
+                local, _, domain = event["payload"][field].rpartition("@")
+                assert row.payload[field].endswith("@" + domain)
+                assert local not in row.payload[field]
 
 
 def test_a_tenant_sees_only_its_own_rows(world):

@@ -22,4 +22,10 @@
   </tbody>
 </table>
 <p class="muted">Rank score is probability x ARR. Click a probability to see why.</p>
+{% set qr = {"unknown_native_key": "key not in the crosswalk", "unknown_domain": "email domain matches no account", "ambiguous_domain": "email domain shared by several accounts", "no_identity": "no key and no email"} %}
+{% set rr = {"duplicate_event_id": "delivered twice", "unknown_event_type": "unknown event type", "unknown_schema_version": "unknown payload version", "unparseable_payload": "unreadable payload"} %}
+<p class="muted" id="data-quality">Across this organisation, {{ "{:,}".format(quality.matched) }} events reached the scores.
+{{ "{:,}".format(quality.quarantined_total) }} could not be matched to an account and are held in quarantine{% if quality.quarantined %} ({% for reason, n in quality.quarantined.items() %}{{ "{:,}".format(n) }} {{ qr.get(reason, reason) }}{% if not loop.last %}; {% endif %}{% endfor %}){% endif %}.
+{{ "{:,}".format(quality.rejected_total) }} were set aside{% if quality.rejected %} ({% for reason, n in quality.rejected.items() %}{{ "{:,}".format(n) }} {{ rr.get(reason, reason) }}{% if not loop.last %}; {% endif %}{% endfor %}){% endif %}.
+Scores never see either.</p>
 {% endblock %}

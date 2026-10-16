@@ -87,7 +87,7 @@ def test_late_event_leaves_snapshot_d_unchanged_and_changes_the_next(seeded):
             sa.text(
                 "INSERT INTO raw_events (tenant_id, source, source_event_id, source_schema_version,"
                 " event_type, occurred_at, received_at, payload)"
-                " VALUES (:tid, 'zendesk', 'qa-late-1', 1, 'ticket_created', :occ, :rec,"
+                " VALUES (:tid, 'zendesk', 'qa-late-1', 2, 'ticket_created', :occ, :rec,"
                 " CAST(:payload AS jsonb))"
             ),
             {

@@ -39,8 +39,9 @@ tar -xzf "$TARBALL" -C "$APP_DIR"
 cd "$APP_DIR"
 
 # Secrets are generated here, once, and never leave the VM.
+rand() { openssl rand -hex 24; }
+SECRET_KEYS="APP_OWNER_PASSWORD APP_BATCH_PASSWORD APP_PASSWORD SESSION_SECRET PII_HASH_SECRET"
 if [ ! -f .env ]; then
-  rand() { openssl rand -hex 24; }
   cp .env.example .env
   sed -i \
     -e "s|^APP_OWNER_PASSWORD=.*|APP_OWNER_PASSWORD=$(rand)|" \
@@ -49,6 +50,7 @@ if [ ! -f .env ]; then
     -e "s|^SESSION_SECRET=.*|SESSION_SECRET=$(rand)|" \
     -e "s|^BASIC_AUTH_PASSWORD=.*|BASIC_AUTH_PASSWORD=$(openssl rand -hex 8)|" \
     -e "s|^COOKIE_SECURE=.*|COOKIE_SECURE=1|" \
+    -e "s|^PII_HASH_SECRET=.*|PII_HASH_SECRET=$(rand)|" \
     .env
   {
     echo "POSTGRES_PASSWORD=$(rand)"
@@ -56,6 +58,17 @@ if [ ! -f .env ]; then
   } >> .env
   chmod 600 .env
 fi
+# Keys added to .env.example after this VM's .env was written. A secret gets a fresh random
+# value, never the example's dev placeholder; anything else takes the example's default.
+while IFS='=' read -r key _; do
+  [[ "$key" =~ ^[A-Z_]+$ ]] || continue
+  grep -q "^${key}=" .env && continue
+  if [[ " $SECRET_KEYS BASIC_AUTH_PASSWORD " == *" $key "* ]]; then
+    echo "${key}=$(rand)" >> .env
+  else
+    grep "^${key}=" .env.example >> .env
+  fi
+done < .env.example
 
 docker compose -f compose.yaml -f deploy/compose.gcp.yaml up -d --build
 docker compose -f compose.yaml -f deploy/compose.gcp.yaml ps

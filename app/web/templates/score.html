@@ -15,7 +15,7 @@
   {% for r in rows %}
     <tr>
       <td>{{ r.name }}</td>
-      <td class="n">{{ r.value | num }}</td>
+      <td class="n">{% if r.missing %}<span class="muted">{{ r.missing }}</span>{% else %}{{ r.value | num }}{% endif %}</td>
       <td class="n">{{ r.contribution | num }}</td>
       <td>{% if r.has_events %}<a href="#" hx-get="/scores/{{ score.score_id }}/events/{{ r.name }}" hx-target="#events" hx-swap="innerHTML">raw events</a>{% endif %}</td>
     </tr>

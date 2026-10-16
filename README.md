@@ -2,7 +2,7 @@
 
 A ranked Monday list for customer success managers: the accounts most worth working this week, in order, with reasons that trace back to raw events. Built for the Fello GTM AI take-home.
 
-Status: Steps 0 to 2 of [docs/TASKS.md](docs/TASKS.md) are built and tested. Step 1 is the walking skeleton: generate, load, resolve, features, train, score, nightly job, worker and web. It is live on one GCP VM at https://136-83-131-193.sslip.io, behind the shared password ([docs/decisions/0002-host-on-gcp-vm.md](docs/decisions/0002-host-on-gcp-vm.md)). Step 2 makes the generator emit every kind of mess in PLAN.md section 5. The live system gets the Step 2 data together with Step 3's handlers. The solution brief, written before any code, is [docs/brief.md](docs/brief.md). The design is [docs/PLAN.md](docs/PLAN.md).
+Status: Steps 0 to 3 of [docs/TASKS.md](docs/TASKS.md) are built and tested. Step 1 is the walking skeleton: generate, load, resolve, features, train, score, nightly job, worker and web. It is live on one GCP VM at https://136-83-131-193.sslip.io, behind the shared password ([docs/decisions/0002-host-on-gcp-vm.md](docs/decisions/0002-host-on-gcp-vm.md)). Step 2 makes the generator emit every kind of mess in PLAN.md section 5. Step 3 gives each kind a handler and a test: dedup, schema dispatch, email pseudonymisation and a data-quality gate ([docs/decisions/step-3-log.md](docs/decisions/step-3-log.md)). The solution brief, written before any code, is [docs/brief.md](docs/brief.md). The design is [docs/PLAN.md](docs/PLAN.md).
 
 ## What I decided
 

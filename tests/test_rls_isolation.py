@@ -50,18 +50,23 @@ def seeded(database_url, tmp_path_factory):
 
 
 def insert_quarantined_event(tenant_id) -> None:
-    """The generator makes no identity breaks yet, so add an event no account can claim."""
+    """The tiny fixture has no identity breaks or replays, so add an event no account can claim,
+    then deliver it a second time: one row lands in quarantine and one in rejects."""
     payload = '{"organization_id": "no-such-org", "ticket_id": 1, "requester_email": null}'
+    insert = sa.text(
+        "INSERT INTO raw_events (tenant_id, source, source_event_id, source_schema_version,"
+        " event_type, occurred_at, received_at, payload) VALUES (:tid, 'zendesk',"
+        " 'qa-orphan-1', 1, 'ticket_created', :occ, :t, CAST(:p AS jsonb))"
+    )
     with tenant_tx(tenant_id) as conn:
-        conn.execute(
-            sa.text(
-                "INSERT INTO raw_events (tenant_id, source, source_event_id, source_schema_version,"
-                " event_type, occurred_at, received_at, payload) VALUES (:tid, 'zendesk',"
-                " 'qa-orphan-1', 1, 'ticket_created', :t, :t, CAST(:p AS jsonb))"
-            ),
-            {"tid": tenant_id, "t": NIGHT, "p": payload},
-        )
-        assert resolve(conn, tenant_id, NIGHT).by_reason == {"unknown_native_key": 1}
+        for received in (NIGHT - timedelta(hours=2), NIGHT - timedelta(hours=1)):
+            conn.execute(
+                insert,
+                {"tid": tenant_id, "occ": NIGHT - timedelta(hours=3), "t": received, "p": payload},
+            )
+        counts = resolve(conn, tenant_id, NIGHT)
+        assert counts.by_reason == {"unknown_native_key": 1}
+        assert counts.by_reject == {"duplicate_event_id": 1}
 
 
 def insert_task(tenant_id) -> None:

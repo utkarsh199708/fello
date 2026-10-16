@@ -33,6 +33,7 @@ ALL_TABLES = {
     "raw_events",
     "normalised_events",
     "quarantine",
+    "rejects",
     "snapshots",
     "scores",
     "job_runs",
@@ -47,6 +48,7 @@ PURGE_ORDER = [
     "job_runs",
     "snapshots",
     "quarantine",
+    "rejects",
     "normalised_events",
     "raw_events",
     "crosswalk",
@@ -282,7 +284,7 @@ def test_migrate_is_idempotent(admin):
     assert migrate_main(["migrate"]) == 0  # the `python -m app migrate` entry point
     with admin.connect() as conn:
         assert conn.execute(sa.text("SELECT version_num FROM alembic_version")).scalar_one() == (
-            "0001"
+            "0002"
         )
         assert conn.execute(
             sa.text("SELECT count(*) FROM pg_policies WHERE schemaname = 'public'")

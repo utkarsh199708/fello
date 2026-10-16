@@ -79,7 +79,8 @@ def read_outcomes(conn: Connection, tenant_ids: list[UUID], label_cutoff) -> pd.
                    attrs->>'stage' AS stage,
                    (attrs->>'renewal_date')::date AS renewal_date,
                    (attrs->>'prior_arr')::float8 AS prior_arr,
-                   (attrs->>'renewed_arr')::float8 AS renewed_arr
+                   (attrs->>'renewed_arr')::float8 AS renewed_arr,
+                   (attrs->>'arr_usd')::float8 AS arr_usd
             FROM normalised_events
             WHERE tenant_id = ANY(:tids) AND received_at <= :cutoff
               AND (source, event_type) IN ({values})
@@ -96,6 +97,7 @@ def read_outcomes(conn: Connection, tenant_ids: list[UUID], label_cutoff) -> pd.
         "renewal_date",
         "prior_arr",
         "renewed_arr",
+        "arr_usd",  # Stripe's renewal events carry the ARR here instead
     ]
     df = pd.DataFrame(rows, columns=columns)
     df["received_at"] = utc(df["received_at"])

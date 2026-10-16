@@ -4,8 +4,9 @@ Two steps, both safe to run again:
 
 - ``load_reference`` copies the five reference CSVs (tenants, csms, accounts, contracts,
   crosswalk). This stands in for a CRM sync in Step 1 (docs/decisions/step-1-design.md 2.4).
-- ``load_events`` copies one tenant's ``events/<slug>.jsonl`` into ``raw_events`` exactly as
-  received. Nothing is parsed, matched or dropped here: that is the resolve step's job.
+- ``load_events`` copies one tenant's ``events/<slug>.jsonl`` into ``raw_events`` as received,
+  with one change: email addresses are pseudonymised (``app.ingest.pii``), so no address is ever
+  stored in clear. Nothing is parsed, matched or dropped here: that is the resolve step's job.
 
 Every tenant's rows go in through ``tenant_tx``, so the row-level-security policy checks each
 row's ``tenant_id`` against the tenant being loaded. A wrong id in a file is an error, not a leak.
@@ -24,6 +25,7 @@ from uuid import UUID
 import sqlalchemy as sa
 
 from app.db import copy_insert, get_engine, tenant_tx
+from app.ingest.pii import scrub, tenant_key
 
 BATCH_SIZE = 10_000  # rows per COPY; keeps memory flat for a 70k-event tenant
 DO_NOTHING = "ON CONFLICT DO NOTHING"
@@ -130,7 +132,9 @@ def load_reference(data_dir: str | Path, tenant: str | UUID | None = None) -> di
 
 
 def _event_rows(path: Path, tenant_id: UUID) -> Iterator[tuple]:
-    """Yield one raw_events row per line of a JSONL file. The payload is kept whole as JSON text."""
+    """Yield one raw_events row per line of a JSONL file: the payload as JSON text, addresses
+    pseudonymised with the tenant's key."""
+    key = tenant_key(tenant_id)
     with open(path, encoding="utf-8") as fh:
         for number, line in enumerate(fh, start=1):
             if not line.strip():
@@ -145,7 +149,7 @@ def _event_rows(path: Path, tenant_id: UUID) -> Iterator[tuple]:
                     e["event_type"],
                     e["occurred_at"],
                     e["received_at"],
-                    json.dumps(e["payload"], separators=(",", ":"), ensure_ascii=False),
+                    json.dumps(scrub(e["payload"], key), separators=(",", ":"), ensure_ascii=False),
                 )
             except (ValueError, KeyError) as exc:
                 raise ValueError(f"{path.name} line {number}: bad event ({exc!r})") from exc

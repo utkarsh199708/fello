@@ -4,8 +4,8 @@
     python -m app bootstrap --config <yaml> [--data data]
 
 ``nightly`` runs the same function the scheduler fires, with ``trigger='cli'``. It is how a
-missed night is recovered: ``nightly --as-of <that night>``. Both exit 1 if any tenant failed,
-so a shell or a CI step notices.
+missed night is recovered: ``nightly --as-of <that night>``. Both exit 1 if any tenant failed
+or was blocked by the data-quality gate, so a shell or a CI step notices.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ import sys
 
 
 def _exit_code(runs) -> int:
-    return 1 if any(run.status == "failed" for run in runs) else 0
+    return 1 if any(run.status in ("failed", "blocked") for run in runs) else 0
 
 
 def _nightly(args: argparse.Namespace) -> int:

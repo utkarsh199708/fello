@@ -73,7 +73,34 @@ EVENT_COLUMNS = (
 # The Salesforce event that reports how a renewal ended. It is an outcome event, so no feature
 # counts it, but its arrival is what moves an account from one contract cycle to the next.
 RENEWAL_EVENT = ("salesforce", "opportunity_stage_changed")
-assert RENEWAL_EVENT in OUTCOME_EVENT_TYPES
+# Every event that reports a renewal: Salesforce, and Stripe where the tenant has it. Resolve
+# stamps the Stripe ones with the renewal_date of the contract they renew. The two sources are
+# reconciled into one decision per (account, renewal_date) by ``renewal_decisions``.
+RENEWAL_EVENTS = frozenset(
+    {
+        RENEWAL_EVENT,
+        ("stripe", "subscription.updated"),
+        ("stripe", "subscription.deleted"),
+    }
+)
+assert RENEWAL_EVENTS <= OUTCOME_EVENT_TYPES
+
+
+def renewal_decisions(events: pd.DataFrame, as_of=None) -> pd.DataFrame:
+    """One row per (account, renewal_date): the first report of that renewal from any source.
+
+    ``events`` needs account_id, source, event_type, received_at and renewal_date. Rows of other
+    types, or without a renewal_date (a Stripe event that matched no contract), are ignored.
+    With ``as_of``, only reports received by then count. Duplicate kind 3: Salesforce and Stripe
+    report the same renewal, and it is decided once, when the first of them arrives.
+    """
+    is_renewal = pd.MultiIndex.from_arrays([events["source"], events["event_type"]]).isin(
+        list(RENEWAL_EVENTS)
+    )
+    seen = events[is_renewal & events["renewal_date"].notna()]
+    if as_of is not None:
+        seen = seen[seen["received_at"] <= pd.Timestamp(as_of)]
+    return seen.sort_values("received_at").drop_duplicates(["account_id", "renewal_date"])
 
 
 @dataclass(frozen=True)
@@ -178,7 +205,7 @@ def active_contracts(contracts: pd.DataFrame, events: pd.DataFrame, as_of) -> pd
     contracts.csv is a CRM stand-in that already holds every future cycle. Read by dates alone,
     it would move an account to its next cycle and new ARR (or drop a churned one) at 00:00 on
     the renewal date, 9 to 17 hours before the Salesforce event that reports the outcome
-    arrives. So a renewal counts as decided only once its ``RENEWAL_EVENT`` was received:
+    arrives. So a renewal counts as decided only once it was reported (``renewal_decisions``):
 
     - cycle 1 is eligible from its start date; a later cycle only once the renewal that opened
       it (``renewal_date == start``) is known;
@@ -192,11 +219,7 @@ def active_contracts(contracts: pd.DataFrame, events: pd.DataFrame, as_of) -> pd
     a training row and its label agree on which renewal is next.
     """
     t = pd.Timestamp(as_of)
-    seen = events[
-        (events["source"] == RENEWAL_EVENT[0])
-        & (events["event_type"] == RENEWAL_EVENT[1])
-        & (events["received_at"] <= t)
-    ]
+    seen = renewal_decisions(events, t)
     known = pd.MultiIndex.from_arrays([seen["account_id"], seen["renewal_date"]])
     c = contracts[contracts["start"] <= t]
     opened = (c["cycle_number"] == 1) | pd.MultiIndex.from_arrays(

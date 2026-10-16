@@ -28,6 +28,7 @@ PURGE_ORDER = (
     "job_runs",
     "snapshots",
     "quarantine",
+    "rejects",
     "normalised_events",
     "raw_events",
     "crosswalk",

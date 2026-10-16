@@ -33,6 +33,7 @@ DEV_PASSWORDS = {
     "APP_OWNER_PASSWORD": "app_owner_dev",
     "APP_BATCH_PASSWORD": "app_batch_dev",
     "APP_PASSWORD": "app_dev",
+    "PII_HASH_SECRET": "dev-only-pii-secret",
 }
 
 

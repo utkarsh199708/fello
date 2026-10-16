@@ -24,7 +24,9 @@ from app.vocab import EVENT_TYPES, OUTCOME_EVENT_TYPES, SOURCES
 # for the model that was trained on them.
 # fs2: the active contract (arr, cycle_number, days_to_renewal, and the population) moves to the
 # next cycle only once that renewal's Salesforce event has arrived, not at 00:00 on its date.
-FEATURE_SET_VERSION = "fs2"
+# fs3: a renewal counts as decided once either Salesforce or Stripe has reported it (the
+# two are reconciled into one outcome, task 3.1), so the cycle can move a few hours sooner.
+FEATURE_SET_VERSION = "fs3"
 
 # Order matters: it is the column order of the feature matrix and of the model's coefficients.
 FEATURES = (

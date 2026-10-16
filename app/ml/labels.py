@@ -15,8 +15,9 @@ renewal event for that date (``opportunity_stage_changed`` with ``renewal_date =
 - 0 if it renewed at or above that;
 - NaN (censored, dropped from training) if no such event had been received by ``label_cutoff``.
 
-The Stripe subscription events are outcome events too, so the featurizer hides them, but the
-labeler ignores them until task 3.1 reconciles the two sources (design deviation 2.6).
+Stripe reports the same renewal (``subscription.deleted`` or ``subscription.updated``), and
+resolve stamps it with the contract's renewal_date. ``reconcile_outcomes`` makes one outcome per
+renewal: Salesforce when it has reported, Stripe otherwise (task 3.1, duplicate kind 3).
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ from sqlalchemy.engine import Connection
 
 from app.ml.features import (
     RENEWAL_EVENT,
+    RENEWAL_EVENTS,
     active_contracts,
     compute_features,
     load_feature_inputs,
@@ -70,6 +72,39 @@ def build_anchors(conn: Connection, tenant_id: UUID | str, start: datetime, end:
     return written
 
 
+def reconcile_outcomes(outcomes: pd.DataFrame, contracts: pd.DataFrame) -> pd.DataFrame:
+    """One outcome per (account, renewal_date), with stage, prior_arr and renewed_arr.
+
+    Salesforce is the system of record (docs/brief.md): its report wins when it exists. A
+    renewal only Stripe reported is translated: ``subscription.deleted`` is a lost renewal, and
+    ``subscription.updated`` renewed at its ``arr_usd``, against the ARR of the contract that
+    ended. Pure. ``outcomes`` as from ``read_outcomes``.
+    """
+    columns = ["account_id", "renewal_date", "received_at", "stage", "prior_arr", "renewed_arr"]
+    is_renewal = pd.MultiIndex.from_arrays([outcomes["source"], outcomes["event_type"]]).isin(
+        list(RENEWAL_EVENTS)
+    )
+    rows = outcomes[is_renewal & outcomes["renewal_date"].notna()]
+    sf = rows[(rows["source"] == LABEL_EVENT[0]) & (rows["event_type"] == LABEL_EVENT[1])]
+    stripe = rows[rows["source"] == "stripe"].merge(
+        contracts[["account_id", "end", "arr"]],
+        left_on=["account_id", "renewal_date"],
+        right_on=["account_id", "end"],
+    )
+    lost = stripe["event_type"] == "subscription.deleted"
+    stripe = stripe.assign(
+        stage=lost.map({True: "closed_lost", False: "closed_won"}),
+        prior_arr=stripe["arr"].astype("float64"),
+        renewed_arr=stripe.get("arr_usd", pd.Series(float("nan"), index=stripe.index))
+        .where(~lost, 0.0)
+        .astype("float64"),
+    )
+    both = pd.concat([sf[columns].assign(rank=0), stripe[columns].assign(rank=1)])
+    # Within one source, the latest arrival wins (a corrected report); across sources, Salesforce.
+    both = both.sort_values(["rank", "received_at"], ascending=[True, False])
+    return both.drop_duplicates(["account_id", "renewal_date"]).drop(columns="rank")
+
+
 def label_anchors(
     anchors: pd.DataFrame,
     contracts: pd.DataFrame,
@@ -102,14 +137,8 @@ def label_anchors(
         for as_of, group in rows.groupby("as_of")
     )
 
-    known = outcomes[
-        (outcomes["source"] == LABEL_EVENT[0])
-        & (outcomes["event_type"] == LABEL_EVENT[1])
-        & (outcomes["received_at"] <= pd.Timestamp(label_cutoff))
-    ]
-    # One outcome per renewal. Step 1 sends no duplicates; if one appears, the latest arrival wins.
-    known = known.sort_values("received_at").drop_duplicates(
-        ["account_id", "renewal_date"], keep="last"
+    known = reconcile_outcomes(
+        outcomes[outcomes["received_at"] <= pd.Timestamp(label_cutoff)], contracts
     )
     decided = active.merge(
         known[["account_id", "renewal_date", "stage", "prior_arr", "renewed_arr"]],
