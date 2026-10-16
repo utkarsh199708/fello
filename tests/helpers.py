@@ -1,4 +1,4 @@
-"""Shared test seeding. Import as ``from tests.helpers import load_tiny``.
+"""Shared test seeding. Import as ``from tests.helpers import load_tiny`` (or ``seed_tiny``).
 
 A test that uses these must request the ``database_url`` fixture first: it migrates the test
 database and points ``DATABASE_URL`` at it. Each test module generates into its own ``tmp_path``.
@@ -6,6 +6,7 @@ database and points ``DATABASE_URL`` at it. Each test module generates into its 
 
 from __future__ import annotations
 
+from datetime import timedelta
 from pathlib import Path
 from uuid import UUID
 
@@ -49,6 +50,33 @@ def load_tiny(data_dir: Path, config: Path = TINY) -> list[UUID]:
     for tid in ids:
         with tenant_tx(tid) as conn:
             resolve(conn, tid, cfg.train_as_of)
+    return ids
+
+
+def seed_tiny(data_dir: Path, config: Path = TINY) -> list[UUID]:
+    """``load_tiny``, then anchors, training, and a nightly snapshot and scores at ``train_as_of``.
+
+    Returns the tenant ids in config order. Idempotent: anchors, snapshots and scores are keyed,
+    and training on the same rows gives the same model version, which is only re-activated.
+    Imports the ML modules here so that tests which only load data never import scikit-learn.
+    Purge the returned tenants at module teardown: ``tiny-loader`` reuses their slugs.
+    """
+    from app.ml.features import write_snapshots
+    from app.ml.labels import build_anchors
+    from app.ml.score import score_tenant
+    from app.ml.train import train
+
+    cfg = load_config(config)
+    ids = load_tiny(data_dir, config)
+    start = cfg.horizon_start + timedelta(weeks=cfg.anchor_warmup_weeks)
+    for tid in ids:
+        with tenant_tx(tid) as conn:
+            build_anchors(conn, tid, start, cfg.train_as_of)
+    train(cfg)
+    for tid in ids:
+        with tenant_tx(tid) as conn:
+            write_snapshots(conn, tid, cfg.train_as_of, "nightly")
+            score_tenant(conn, tid, cfg.train_as_of)
     return ids
 
 
