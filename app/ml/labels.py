@@ -5,7 +5,9 @@
 a year, daily rows would be near-copies of each other (docs/PLAN.md section 6).
 
 **Label.** The outcome of the account's next renewal after the anchor. The next renewal is the
-``end_date`` of the contract active at the anchor. The outcome is read from the Salesforce
+``end_date`` of the contract active at the anchor, chosen by the same ``active_contracts`` the
+features use: an anchor at 00:00 on a renewal date whose outcome had not yet arrived is still in
+the ending cycle, so it is labelled with that renewal. The outcome is read from the Salesforce
 renewal event for that date (``opportunity_stage_changed`` with ``renewal_date == end_date``):
 
 - 1 if the renewal was lost (``closed_lost``), or if it renewed below
@@ -25,12 +27,16 @@ from uuid import UUID
 import pandas as pd
 from sqlalchemy.engine import Connection
 
-from app.ml.features import compute_features, load_feature_inputs, write_snapshots
-from app.vocab import OUTCOME_EVENT_TYPES
+from app.ml.features import (
+    RENEWAL_EVENT,
+    active_contracts,
+    compute_features,
+    load_feature_inputs,
+    write_snapshots,
+)
 
-# The one outcome event the Step 1 labeler reads.
-LABEL_EVENT = ("salesforce", "opportunity_stage_changed")
-assert LABEL_EVENT in OUTCOME_EVENT_TYPES  # the featurizer must be hiding what we label from
+# The one outcome event the Step 1 labeler reads: the same event that closes a contract cycle.
+LABEL_EVENT = RENEWAL_EVENT
 
 
 def monday_anchors(start: datetime, end: datetime) -> list[datetime]:
@@ -74,17 +80,27 @@ def label_anchors(
     """Label each anchor row 1, 0 or NaN (censored). Pure; aligned to ``anchors.index``.
 
     - ``anchors``: tenant_id, account_id, as_of (UTC timestamps).
-    - ``contracts``: account_id, start, end (UTC midnights), as from ``contracts_frame``.
+    - ``contracts``: account_id, cycle_number, start, end (UTC midnights), as from
+      ``contracts_frame``.
     - ``outcomes``: outcome events with source, event_type, account_id, received_at, stage,
       renewal_date (UTC midnight), prior_arr, renewed_arr.
     - ``thresholds``: tenant_id -> contraction_threshold.
+
+    The active contract of each anchor is decided with the outcomes received by that anchor's
+    ``as_of`` (what the featurizer saw); the label then uses those received by ``label_cutoff``.
     """
+    if anchors.empty:
+        return pd.Series(index=anchors.index, dtype="float64")
     rows = anchors[["tenant_id", "account_id", "as_of"]].rename_axis("row").reset_index()
-    with_contract = rows.merge(contracts[["account_id", "start", "end"]], on="account_id")
-    active = with_contract[
-        (with_contract["start"] <= with_contract["as_of"])
-        & (with_contract["as_of"] < with_contract["end"])
-    ]
+    # One active_contracts call per anchor time: a few hundred Mondays, each a vector operation.
+    active = pd.concat(
+        group.merge(
+            active_contracts(contracts, outcomes, as_of)[["end"]],
+            left_on="account_id",
+            right_index=True,
+        )
+        for as_of, group in rows.groupby("as_of")
+    )
 
     known = outcomes[
         (outcomes["source"] == LABEL_EVENT[0])

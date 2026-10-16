@@ -56,8 +56,9 @@ SNAPSHOT_COLUMNS = (
     "ingest_watermark",
 )
 
-# Columns of FeatureInputs.events. Two payload fields are pulled out because two features need
-# them; everything else in attrs stays in the database.
+# Columns of FeatureInputs.events. Three payload fields are pulled out: two features need
+# active_users and thread_id, and active_contracts needs renewal_date. Everything else in attrs
+# stays in the database.
 EVENT_COLUMNS = (
     "account_id",
     "source",
@@ -66,7 +67,13 @@ EVENT_COLUMNS = (
     "received_at",
     "active_users",
     "thread_id",
+    "renewal_date",
 )
+
+# The Salesforce event that reports how a renewal ended. It is an outcome event, so no feature
+# counts it, but its arrival is what moves an account from one contract cycle to the next.
+RENEWAL_EVENT = ("salesforce", "opportunity_stage_changed")
+assert RENEWAL_EVENT in OUTCOME_EVENT_TYPES
 
 
 @dataclass(frozen=True)
@@ -74,7 +81,8 @@ class FeatureInputs:
     """Everything one tenant had received by some time, ready for ``compute_features``.
 
     ``contracts.start`` and ``contracts.end`` are the contract dates as UTC midnights, so they
-    compare directly with an ``as_of`` timestamp.
+    compare directly with an ``as_of`` timestamp. ``events.renewal_date`` is one too (NaT on
+    every event that is not a renewal).
     """
 
     connected_at: dict[str, datetime]  # source -> when the tenant connected it
@@ -136,7 +144,8 @@ def load_feature_inputs(conn: Connection, tenant_id: UUID | str, upto: datetime)
                 """
                 SELECT account_id, source, event_type, occurred_at, received_at,
                        (attrs->>'active_users')::int AS active_users,
-                       attrs->>'thread_id' AS thread_id
+                       attrs->>'thread_id' AS thread_id,
+                       (attrs->>'renewal_date')::date AS renewal_date
                 FROM normalised_events
                 WHERE tenant_id = :tid AND received_at <= :upto
                 """
@@ -148,6 +157,7 @@ def load_feature_inputs(conn: Connection, tenant_id: UUID | str, upto: datetime)
     events["occurred_at"] = utc(events["occurred_at"])
     events["received_at"] = utc(events["received_at"])
     events["active_users"] = events["active_users"].astype("float64")
+    events["renewal_date"] = utc(events["renewal_date"])
     return FeatureInputs(
         connected_at={source: parse_utc(ts) for source, ts in connected.items()},
         accounts=accounts,
@@ -162,18 +172,57 @@ def is_connected(connected_at: dict[str, datetime], source: str, as_of: datetime
     return when is not None and when <= as_of
 
 
+def active_contracts(contracts: pd.DataFrame, events: pd.DataFrame, as_of) -> pd.DataFrame:
+    """The contract each account is in at ``as_of``, as far as the system could know then.
+
+    contracts.csv is a CRM stand-in that already holds every future cycle. Read by dates alone,
+    it would move an account to its next cycle and new ARR (or drop a churned one) at 00:00 on
+    the renewal date, 9 to 17 hours before the Salesforce event that reports the outcome
+    arrives. So a renewal counts as decided only once its ``RENEWAL_EVENT`` was received:
+
+    - cycle 1 is eligible from its start date; a later cycle only once the renewal that opened
+      it (``renewal_date == start``) is known;
+    - a cycle whose end date has passed stays active until the renewal that closes it is known,
+      so while the outcome is pending its ``days_to_renewal`` is 0, then negative.
+
+    ``contracts`` as from ``contracts_frame``. ``events`` needs account_id, source, event_type,
+    received_at and renewal_date (UTC midnight); rows of other types are ignored, so both the
+    feature events and the labeler's outcome frame can be passed. Returns the active contract
+    rows indexed by account_id, sorted. Used by ``compute_features`` and ``label_anchors``, so
+    a training row and its label agree on which renewal is next.
+    """
+    t = pd.Timestamp(as_of)
+    seen = events[
+        (events["source"] == RENEWAL_EVENT[0])
+        & (events["event_type"] == RENEWAL_EVENT[1])
+        & (events["received_at"] <= t)
+    ]
+    known = pd.MultiIndex.from_arrays([seen["account_id"], seen["renewal_date"]])
+    c = contracts[contracts["start"] <= t]
+    opened = (c["cycle_number"] == 1) | pd.MultiIndex.from_arrays(
+        [c["account_id"], c["start"]]
+    ).isin(known)
+    closed = (c["end"] <= t) & pd.MultiIndex.from_arrays([c["account_id"], c["end"]]).isin(known)
+    # One open cycle per account is normal. If an outcome never arrives, the cycles after it are
+    # never opened, so keeping the latest open one is still correct.
+    open_cycles = c[opened & ~closed].sort_values("cycle_number")
+    return (
+        open_cycles.drop_duplicates("account_id", keep="last").set_index("account_id").sort_index()
+    )
+
+
 def compute_features(inputs: FeatureInputs, as_of: datetime) -> pd.DataFrame:
     """The feature table at ``as_of``: indexed by account_id, columns in ``FEATURES`` order.
 
-    Pure. The population is the accounts with an active contract, meaning
-    ``start_date <= as_of < end_date``; contract values come from that contract only.
+    Pure. The population is the accounts with an active contract as ``active_contracts``
+    defines it (renewals count once their event arrived); contract values come from that
+    contract only.
     """
     if as_of.tzinfo is None:
         raise ValueError("as_of must be timezone-aware (UTC)")
     t = pd.Timestamp(as_of).tz_convert("UTC")
 
-    c = inputs.contracts
-    active = c[(c["start"] <= t) & (t < c["end"])].set_index("account_id").sort_index()
+    active = active_contracts(inputs.contracts, inputs.events, t)
     ids = active.index
     out = pd.DataFrame(index=ids, columns=list(FEATURES), dtype="float64")
     out.index.name = "account_id"
@@ -182,6 +231,7 @@ def compute_features(inputs: FeatureInputs, as_of: datetime) -> pd.DataFrame:
     out["account_tenure_days"] = (t - started).dt.days
     out["arr"] = active["arr"]
     # Whole days from as_of's date to the renewal date, so 00:00 and 23:59 on one day agree.
+    # 0 or negative while a renewal that is due has no outcome yet.
     out["days_to_renewal"] = (active["end"] - t.normalize()).dt.days
     out["cycle_number"] = active["cycle_number"]
 

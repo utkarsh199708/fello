@@ -102,13 +102,17 @@ def test_censored_rows_are_nan(outcomes):
 
 
 def test_the_label_is_the_next_renewal_after_the_anchor():
-    # From the anchor after the renewal, the active contract is cycle 2, renewing in 2027:
-    # the 2026 outcome no longer labels it.
+    # From the anchor after the outcome arrived, the active contract is cycle 2, renewing in
+    # 2027: the 2026 outcome no longer labels it.
     after = datetime(2026, 6, 8, tzinfo=UTC)
-    assert pd.isna(label_one([{"stage": "closed_lost"}], as_of=after))
-    # An anchor on the renewal day itself already belongs to the new cycle.
+    assert pd.isna(label_one([{"renewed": 50.0}], as_of=after))
+    # An anchor at 00:00 on the renewal day comes before the outcome (received at 12:00), so the
+    # account is still in cycle 1, as its features say, and that renewal is its label.
     on_the_day = datetime(2026, 6, 1, tzinfo=UTC)
-    assert pd.isna(label_one([{"stage": "closed_lost"}], as_of=on_the_day))
+    assert label_one([{"renewed": 50.0}], as_of=on_the_day) == 1.0
+    # Had the outcome arrived by then, the anchor would already belong to cycle 2.
+    early = {"renewed": 50.0, "received": datetime(2026, 5, 31, 12, tzinfo=UTC)}
+    assert pd.isna(label_one([early], as_of=on_the_day))
 
 
 def test_no_active_contract_is_nan():

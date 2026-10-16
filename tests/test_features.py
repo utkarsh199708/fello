@@ -22,6 +22,7 @@ from app.ml.feature_spec import FEATURE_EVENTS, FEATURE_SET_VERSION, FEATURES
 from app.ml.features import (
     EVENT_COLUMNS,
     FeatureInputs,
+    active_contracts,
     build_features,
     compute_features,
     contracts_frame,
@@ -40,15 +41,33 @@ ALL_SOURCES |= {s: datetime(2024, 1, 1, tzinfo=UTC) for s in ("stripe", "gmail")
 def ev(account, source, event_type, occurred, received=None, active_users=None, thread_id=None):
     """One event row; received defaults to one second after it occurred."""
     received = occurred + timedelta(seconds=1) if received is None else received
-    return (account, source, event_type, occurred, received, active_users, thread_id)
+    return (account, source, event_type, occurred, received, active_users, thread_id, None)
 
 
-def inputs(events, connected=None) -> FeatureInputs:
-    """A and B are active at AS_OF. ENDED's contract ended before it; FUTURE's starts after."""
+def renewal(account, renewal_date: date, received: datetime):
+    """The Salesforce event that reports the outcome of the renewal on ``renewal_date``."""
+    kind = ("salesforce", "opportunity_stage_changed")
+    return (account, *kind, received, received, None, None, renewal_date)
+
+
+def frame_of(events) -> pd.DataFrame:
     frame = pd.DataFrame(events, columns=list(EVENT_COLUMNS))
     frame["occurred_at"] = utc(frame["occurred_at"])
     frame["received_at"] = utc(frame["received_at"])
     frame["active_users"] = frame["active_users"].astype("float64")
+    frame["renewal_date"] = utc(frame["renewal_date"])
+    return frame
+
+
+# A's renewal into cycle 2 and ENDED's churn, both reported the afternoon of the renewal date.
+RENEWALS = [
+    renewal(A, date(2026, 1, 1), datetime(2026, 1, 1, 15, tzinfo=UTC)),
+    renewal(ENDED, date(2026, 10, 5), datetime(2026, 10, 5, 15, tzinfo=UTC)),
+]
+
+
+def inputs(events, connected=None) -> FeatureInputs:
+    """A and B are active at AS_OF. ENDED churned before it; FUTURE's contract starts after."""
     return FeatureInputs(
         connected_at=ALL_SOURCES if connected is None else connected,
         accounts=pd.DataFrame(
@@ -62,24 +81,81 @@ def inputs(events, connected=None) -> FeatureInputs:
                 (A, 1, date(2025, 1, 1), date(2026, 1, 1), 90_000),
                 (A, 2, date(2026, 1, 1), date(2027, 1, 1), 100_000),
                 (B, 1, date(2026, 7, 4), date(2027, 7, 4), 5_000),
-                (ENDED, 1, date(2025, 10, 12), date(2026, 10, 12), 7_000),  # ends at AS_OF
+                (ENDED, 1, date(2025, 10, 5), date(2026, 10, 5), 7_000),
                 (FUTURE, 1, date(2026, 10, 13), date(2027, 10, 13), 8_000),
             ]
         ),
-        events=frame,
+        events=frame_of(RENEWALS + list(events)),
     )
 
 
 def test_population_and_contract_features():
     out = compute_features(inputs([]), AS_OF)
     assert list(out.columns) == list(FEATURES)
-    assert list(out.index) == [A, B]  # start_date <= as_of < end_date
+    assert list(out.index) == [A, B]  # ENDED's churn has arrived, FUTURE has not started
     assert out.loc[A, "arr"] == 100_000 and out.loc[A, "cycle_number"] == 2
     assert out.loc[A, "days_to_renewal"] == (date(2027, 1, 1) - date(2026, 10, 12)).days
     assert out.loc[A, "account_tenure_days"] == 400
     # Later the same day, the number of days to renewal does not change.
     later = compute_features(inputs([]), AS_OF + timedelta(hours=23))
     assert later.loc[A, "days_to_renewal"] == out.loc[A, "days_to_renewal"]
+
+
+RENEWED, CHURNED = (uuid.UUID(f"00000000-0000-4000-8000-0000000000e{n}") for n in range(2))
+D = date(2026, 10, 13)  # both renewals fall due on this day
+D0 = datetime(2026, 10, 13, tzinfo=UTC)
+
+
+def renewal_day_inputs(received: datetime) -> FeatureInputs:
+    """RENEWED renews on D at a lower ARR; CHURNED is lost on D. Both outcomes arrive at received.
+
+    contracts holds RENEWED's next cycle already, as contracts.csv does (it runs ahead of time).
+    """
+    return FeatureInputs(
+        connected_at=ALL_SOURCES,
+        accounts=pd.DataFrame(
+            {"account_id": [RENEWED, CHURNED], "started_at": utc([D0 - timedelta(days=365)] * 2)}
+        ),
+        contracts=contracts_frame(
+            [
+                (RENEWED, 1, date(2025, 10, 13), D, 100_000),
+                (RENEWED, 2, D, date(2027, 10, 13), 60_000),
+                (CHURNED, 1, date(2025, 10, 13), D, 50_000),
+            ]
+        ),
+        events=frame_of([renewal(RENEWED, D, received), renewal(CHURNED, D, received)]),
+    )
+
+
+def test_a_renewal_moves_the_account_only_once_its_outcome_has_arrived():
+    data = renewal_day_inputs(received=D0 + timedelta(hours=12))
+    # The nightly run at 02:00 on the renewal day: the outcomes are not in yet.
+    night = compute_features(data, D0 + timedelta(hours=2))
+    assert list(night.index) == sorted([RENEWED, CHURNED])  # the churned account is still listed
+    assert night.loc[RENEWED, "arr"] == 100_000 and night.loc[RENEWED, "cycle_number"] == 1
+    assert (night["days_to_renewal"] == 0).all()
+    # From the moment the outcome arrives, and the next night, the account has moved.
+    for as_of in (D0 + timedelta(hours=12), D0 + timedelta(days=1, hours=2)):
+        out = compute_features(data, as_of)
+        assert list(out.index) == [RENEWED]
+        assert out.loc[RENEWED, "arr"] == 60_000 and out.loc[RENEWED, "cycle_number"] == 2
+    assert out.loc[RENEWED, "days_to_renewal"] == 364
+    # An outcome that is late by days keeps the account in its old cycle, overdue.
+    late = renewal_day_inputs(received=D0 + timedelta(days=3, hours=1))
+    out = compute_features(late, D0 + timedelta(days=3))
+    assert list(out.index) == sorted([RENEWED, CHURNED])
+    assert (out["days_to_renewal"] == -3).all() and (out["cycle_number"] == 1).all()
+
+
+def test_active_contracts_ignores_other_events_and_early_outcomes():
+    data = renewal_day_inputs(received=D0 - timedelta(days=2))  # closed two days before D
+    before = active_contracts(data.contracts, data.events, D0 - timedelta(seconds=1))
+    assert before["cycle_number"].to_dict() == {RENEWED: 1, CHURNED: 1}  # D has not come yet
+    on_the_day = active_contracts(data.contracts, data.events, D0)
+    assert on_the_day["cycle_number"].to_dict() == {RENEWED: 2}
+    # A renewal_date on any other event type moves nothing.
+    other = data.events.assign(event_type="account_upserted")
+    assert len(active_contracts(data.contracts, other, D0 + timedelta(days=1))) == 2
 
 
 def test_window_edges_and_visibility():

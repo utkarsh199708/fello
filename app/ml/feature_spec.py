@@ -22,7 +22,9 @@ from app.vocab import EVENT_TYPES, OUTCOME_EVENT_TYPES, SOURCES
 
 # Bump when a feature's definition changes. Snapshots are keyed by it, so old rows stay valid
 # for the model that was trained on them.
-FEATURE_SET_VERSION = "fs1"
+# fs2: the active contract (arr, cycle_number, days_to_renewal, and the population) moves to the
+# next cycle only once that renewal's Salesforce event has arrived, not at 00:00 on its date.
+FEATURE_SET_VERSION = "fs2"
 
 # Order matters: it is the column order of the feature matrix and of the model's coefficients.
 FEATURES = (
