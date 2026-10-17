@@ -79,3 +79,7 @@ Commit `4d10c56` was deployed at 10:02 UTC, with the volumes kept. The worker ra
 ## Penpot restyle redeploy, 2026-10-17 (UTC)
 
 Commit `7575550` was deployed at 10:24 UTC, with the volumes kept. It changes only the templates and adds the vendored Work Sans fonts. The scheduler is armed for 02:00 UTC, and the night history is unchanged.
+
+## Penpot redesign redeploy, 2026-10-17 (UTC)
+
+Commit `de71ed8` was deployed at 11:45 UTC, with the volumes kept. It changes only the web templates and the list's grouping. The scheduler is armed for 02:00 UTC, and the night history is unchanged.
