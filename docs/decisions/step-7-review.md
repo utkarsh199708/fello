@@ -46,3 +46,14 @@ Date: 2026-10-17. A review of the finished submission, read as a reviewer would,
 
 - **No monotone constraints.** The model sometimes treats a rise in usage as a small risk factor. Retraining now would change the evaluation and the live model three days before the demo. It is listed as a deliberate skip.
 - **The data was not regenerated** to move the planted renewals after the demo date. That would need a new bootstrap and restart the three-night soak.
+
+## Redesign in Penpot, 2026-10-17
+
+A first restyle used Penpot's dark theme and tokens directly. It still read as a generated dashboard: three bright accents competing, a pill or badge on every row, a row of four stat cards, uppercase labels everywhere, and one flat table. The pages were redesigned in Penpot instead (the file "Monday list": a component library and frames for the list, score, account and runs pages), then rebuilt to match.
+
+- **Light and neutral, one accent.** Red is kept for urgency, orange for risk bars, purple for links and selection. Nothing else is coloured.
+- **A sidebar** carries the organisation and CSM, the pages, and last night's run status, which is the "runs by itself" proof, on every page.
+- **One sentence replaces the stat cards** on the list: how many accounts to work, the ARR at risk, and how many tasks have waited too long.
+- **The list is grouped by urgency:** escalated, the rest of the top 8, watch (ranks 9 to 24), and everyone else folded away. Each group keeps the chosen sort.
+- **Two-line rows.** The account name, with renewal, ARR and task age beneath; reasons in plain text; one action, with snooze, dismiss and the briefing behind a "···" menu.
+- Every string and id the tests rely on was kept, and the tests pass unchanged.

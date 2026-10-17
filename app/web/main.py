@@ -242,9 +242,19 @@ def create_app() -> FastAPI:
     def page(request: Request, name: str, context: dict, tenant_id=None) -> Response:
         """Render with the CSRF token and, inside a tenant, the staleness header."""
         context = {"csrf": csrf_token(request), **context}
+        ids = selected(request)
+        if tenant_id is None and ids is not None:
+            tenant_id = ids[0]
         if tenant_id is not None:
             with tenant_tx(tenant_id) as conn:
                 context["staleness"] = q.staleness(conn, now())
+                # The sidebar names whose book this is.
+                if ids is not None and ids[0] == tenant_id:
+                    csm = None if ids[1] == q.UNASSIGNED else q.get_csm(conn, ids[1])
+                    context["who"] = {
+                        "tenant": q.tenant_name(conn),
+                        "csm": csm["name"] if csm else "Unassigned accounts",
+                    }
         return templates.TemplateResponse(request, name, context)
 
     def selected(request: Request) -> tuple[uuid.UUID, uuid.UUID | str] | None:
@@ -336,6 +346,24 @@ def create_app() -> FastAPI:
                 r["task_age"] = business_days(r["task_run_date"], today)
         ranked_rows = [r for r in rows if r["evidence_state"] != "insufficient"]
         thin = [r for r in rows if r["evidence_state"] == "insufficient"]
+        # The list in order of urgency. Each group keeps the chosen sort; escalated comes first.
+        k = ranked_rows[0]["k"] if ranked_rows else 8
+        escalated = [r for r in ranked_rows if r["task_status"] == "escalated"]
+        rest = [r for r in ranked_rows if r["task_status"] != "escalated"]
+
+        def coloured(*colours: str) -> list[dict[str, Any]]:
+            return [r for r in rest if r["colour"] in colours]
+
+        groups = [
+            g
+            for g in (
+                ("Escalated", "urgent", "untouched 5 business days, renewing soon", escalated),
+                ("This week", "risk", f"the rest of your top {k}", coloured("red")),
+                ("Watch", "warn", "the next 16: no task unless they move up", coloured("yellow")),
+                ("Everyone else", "ok", "lower risk for now", coloured("green", "grey")),
+            )
+            if g[3]
+        ]
         return page(
             request,
             "list.html",
@@ -344,6 +372,7 @@ def create_app() -> FastAPI:
                 "csm": csm,
                 "as_of": as_of,
                 "rows": ranked_rows,
+                "groups": groups,
                 "thin": thin,
                 "summary": book_summary(ranked_rows, thin),
                 "quality": quality,

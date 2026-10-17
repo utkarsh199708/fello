@@ -3,73 +3,70 @@
 {% block body %}
 {% set latest = scores[0] if scores else none %}
 {% set contract = contracts[0] if contracts else none %}
+{% set active = tasks | selectattr("status", "in", ["open", "escalated", "snoozed"]) | list %}
 <div class="head">
   <div>
-    <p class="sub"><a href="/list">My list</a> / Account</p>
+    <p class="crumb"><a href="/list">My list</a> / Account</p>
     <h1>{{ account.name }}</h1>
     <p class="sub">{{ account.website_domain }} · CSM {{ account.csm or "none" }} · customer since {{ (account.started_at | string)[:10] }}</p>
   </div>
   {% if latest %}<a class="btn" href="/scores/{{ latest.score_id }}">Why the latest score</a>{% endif %}
 </div>
 
-<section class="stats">
-  <div class="card stat"><div class="k">Renewal risk now</div>
-    <div class="v">{{ latest.probability | pct if latest else "not scored" }}</div>
-    <div class="s">{% if latest %}{% if latest.evidence_state == "insufficient" %}<span class="pill grey">not enough signal</span>{% else %}<span class="pill {{ latest.colour }}">{{ latest.colour }}</span> rank {{ latest.rank_in_book }}{% endif %}{% endif %}</div></div>
-  <div class="card stat"><div class="k">ARR</div><div class="v">{{ "$" ~ (contract.arr | money) if contract else "" }}</div><div class="s">{{ "cycle " ~ contract.cycle_number if contract else "" }}</div></div>
-  <div class="card stat"><div class="k">Contract ends</div><div class="v" style="font-size: 20px">{{ contract.end_date if contract else "" }}</div><div class="s">the next renewal</div></div>
-  <div class="card stat"><div class="k">Tasks</div><div class="v">{{ tasks | length }}</div><div class="s">{{ (tasks | selectattr("status", "in", ["open", "escalated", "snoozed"]) | list | length) }} still active</div></div>
-</section>
+<div class="facts">
+  <div class="fact"><div class="k">Risk now</div>
+    <div class="v {{ 'hotv' if latest and latest.colour == 'red' else '' }}">{% if latest %}{{ latest.probability | pct }}{% if latest.evidence_state == "insufficient" %} · not enough signal{% else %} · rank {{ latest.rank_in_book }}{% endif %}{% else %}not scored{% endif %}</div></div>
+  <div class="fact"><div class="k">ARR</div><div class="v">{{ "$" ~ (contract.arr | money) if contract else "" }}</div></div>
+  <div class="fact"><div class="k">Contract ends</div><div class="v">{{ contract.end_date if contract else "" }}</div></div>
+  <div class="fact"><div class="k">Task</div><div class="v {{ 'hotv' if active and active[0].status == 'escalated' else '' }}">{{ (active[0].status | capitalize) if active else "None open" }}</div></div>
+</div>
 
 <div class="grid2">
-  <section class="card pad">
-    <h2 style="margin-top: 0">Score history</h2>
+  <section class="card">
+    <div class="card-head"><h2>Score history</h2><span class="small faint">last {{ scores | length }} nights</span></div>
     {% if spark %}
-    <svg viewBox="0 0 320 64" width="100%" height="64" preserveAspectRatio="none" role="img" aria-label="Probability over the scored nights">
+    <div class="pad" style="padding-bottom: 0">
+    <svg viewBox="0 0 320 64" width="100%" height="64" preserveAspectRatio="none" role="img" aria-label="Probability over the scored nights, oldest on the left">
       <polyline points="{{ spark }}" fill="none" stroke-width="2" vector-effect="non-scaling-stroke"/>
     </svg>
-    <p class="muted small">Probability over the last {{ scores | length }} scored nights, oldest on the left.</p>
+    </div>
     {% endif %}
-    <div class="table">
     <table>
-      <thead><tr><th>As of</th><th class="n">Probability</th><th class="n">Rank</th><th>Colour</th><th>Model</th></tr></thead>
-      <tbody>{% for s in scores %}<tr><td><a href="/scores/{{ s.score_id }}">{{ s.as_of | ts }}</a></td><td class="n">{{ s.probability | pct }}</td><td class="n">{{ "#" ~ s.rank_in_book if s.rank_in_book is not none else "" }}</td><td>{% if s.evidence_state == "insufficient" %}<span class="pill grey">not enough signal</span>{% else %}<span class="pill {{ s.colour }}">{{ s.colour }}</span>{% endif %}</td><td><code>{{ s.model_version }}</code></td></tr>
-      {% else %}<tr><td colspan="5" class="muted">Not scored yet.</td></tr>{% endfor %}</tbody>
+      <thead><tr><th>As of</th><th class="n">Probability</th><th class="n">Rank</th><th>Colour</th></tr></thead>
+      <tbody>{% for s in scores %}<tr><td><a href="/scores/{{ s.score_id }}">{{ s.as_of | ts }}</a></td><td class="n">{{ s.probability | pct }}</td><td class="n">{{ "#" ~ s.rank_in_book if s.rank_in_book is not none else "" }}</td><td>{% if s.evidence_state == "insufficient" %}<span class="pill grey">not enough signal</span>{% else %}<span class="pill {{ s.colour }}">{{ s.colour }}</span>{% endif %}</td></tr>
+      {% else %}<tr><td colspan="4" class="muted">Not scored yet.</td></tr>{% endfor %}</tbody>
     </table>
-    </div>
   </section>
-  <section class="card pad">
-    <h2 style="margin-top: 0">Tasks</h2>
-    <div class="table">
-    <table>
-      <thead><tr><th>Raised</th><th>Status</th><th>Why raised</th><th class="n">Probability</th></tr></thead>
-      <tbody>{% for t in tasks %}<tr>
-        <td>{{ t.run_date }}</td>
-        <td><span class="badge {{ t.status }}">{{ t.status }}</span>{% if t.snoozed_until %} until {{ t.snoozed_until }}{% endif %}{% if t.dismissed_reason %}: {{ t.dismissed_reason }}{% endif %}</td>
-        <td>{{ t.rule_fired | replace("_", " ") }}<div class="muted small">queue: {{ t.queue | replace("_", " ") }}</div></td><td class="n">{{ t.probability | pct }}</td>
-      </tr>
-      <tr><td colspan="4" class="small">{% if t.briefing %}<div>{{ t.briefing }}</div>{% endif %}<div class="muted">{% for e in t.events %}{{ e.created_at | ts }} {{ e.kind | replace("_", " ") }}{% if e.detail.reason %} ({{ e.detail.reason }}){% endif %}{% if not loop.last %}; {% endif %}{% endfor %}</div></td></tr>
-      {% else %}<tr><td colspan="4" class="muted">No tasks.</td></tr>{% endfor %}</tbody>
-    </table>
+  <section class="card">
+    <div class="card-head"><h2>Tasks</h2><span class="small faint">{{ tasks | length }} in all</span></div>
+    {% for t in tasks %}
+    <div class="pad" style="border-bottom: 1px solid var(--line-soft)">
+      <div><span class="badge {{ t.status }}">{{ t.status | capitalize }}</span>{% if t.snoozed_until %} until {{ t.snoozed_until }}{% endif %}{% if t.dismissed_reason %}: {{ t.dismissed_reason }}{% endif %}
+        <span class="small muted">raised {{ t.run_date }} by the {{ t.rule_fired | replace("_", " ") }} rule · {{ t.queue | replace("_", " ") }} queue · {{ t.probability | pct }}</span></div>
+      {% if t.briefing %}<p class="small muted">{{ t.briefing }}</p>{% endif %}
+      <div class="small faint">{% for e in t.events %}{{ e.created_at | ts }} {{ e.kind | replace("_", " ") }}{% if e.detail.reason %} ({{ e.detail.reason }}){% endif %}{% if not loop.last %} · {% endif %}{% endfor %}</div>
     </div>
+    {% else %}<p class="pad muted">No tasks.</p>{% endfor %}
   </section>
 </div>
 
-<h2>Contracts</h2>
-<div class="card table">
-<table>
-  <thead><tr><th class="n">Cycle</th><th>Start</th><th>End</th><th class="n">ARR</th></tr></thead>
-  <tbody>{% for c in contracts %}<tr><td class="n">{{ c.cycle_number }}</td><td>{{ c.start_date }}</td><td>{{ c.end_date }}</td><td class="n">${{ c.arr | money }}</td></tr>{% endfor %}</tbody>
-</table>
+<div class="card">
+  <div class="card-head"><h2>Contracts</h2></div>
+  <table>
+    <thead><tr><th class="n">Cycle</th><th>Start</th><th>End</th><th class="n">ARR</th></tr></thead>
+    <tbody>{% for c in contracts %}<tr><td class="n">{{ c.cycle_number }}</td><td>{{ c.start_date }}</td><td>{{ c.end_date }}</td><td class="n">${{ c.arr | money }}</td></tr>{% endfor %}</tbody>
+  </table>
 </div>
 
-<h2>Timeline</h2>
-<p class="note">Events received by {{ as_of | ts }}, newest first, at most 200. "Arrived late" marks an event that reached us after a score that would have counted it.</p>
-<div class="card table">
-<table>
-  <thead><tr><th>Occurred</th><th>Received</th><th>Source</th><th>Type</th><th>Matched by</th><th>Payload</th></tr></thead>
-  <tbody>{% for e in timeline %}<tr><td>{{ e.occurred_at | ts }}</td><td>{{ e.received_at | ts }}{% if e.late_for %}<div class="late">arrived late: missed the score of {{ e.late_for | ts }}</div>{% endif %}</td><td>{{ e.source }}</td><td>{{ e.event_type }}</td><td>{{ e.match_method }}</td><td><pre>{{ e.payload | tojson }}</pre></td></tr>
-  {% else %}<tr><td colspan="6" class="muted">No events.</td></tr>{% endfor %}</tbody>
-</table>
+<div class="card">
+  <div class="card-head"><h2>Timeline</h2><span class="small faint">events received by {{ as_of | ts }}, newest first, at most 200</span></div>
+  <div class="table">
+  <table>
+    <thead><tr><th>Occurred</th><th>Received</th><th>Source</th><th>Type</th><th>Matched by</th><th>Payload</th></tr></thead>
+    <tbody>{% for e in timeline %}<tr><td>{{ e.occurred_at | ts }}</td><td>{{ e.received_at | ts }}{% if e.late_for %}<div class="late">arrived late: missed the score of {{ e.late_for | ts }}</div>{% endif %}</td><td class="muted">{{ e.source }}</td><td>{{ e.event_type }}</td><td class="muted">{{ e.match_method }}</td><td><pre>{{ e.payload | tojson }}</pre></td></tr>
+    {% else %}<tr><td colspan="6" class="muted">No events.</td></tr>{% endfor %}</tbody>
+  </table>
+  </div>
 </div>
+<p class="note">"Arrived late" marks an event that reached us after a score that would have counted it. It changes the next night's score, never an old one.</p>
 {% endblock %}

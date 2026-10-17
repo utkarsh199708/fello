@@ -1,64 +1,72 @@
 {% extends "base.html" %}
 {% block title %}{{ score.account }}: why this score - Monday list{% endblock %}
 {% block body %}
+{% macro factor_rows(items) %}
+  {% for r in items %}
+    <tr>
+      <td>{{ r.label[:1] | upper }}{{ r.label[1:] }}<div class="fname">{{ r.name }}</div></td>
+      <td class="n muted">{% if r.missing %}{{ r.missing }}{% else %}{{ r.value | num }}{% endif %}</td>
+      <td><div class="contrib"><div class="track">{% if r.contribution > 0 %}<div class="up" style="width: {{ r.width }}%"></div>{% elif r.contribution < 0 %}<div class="down" style="width: {{ r.width }}%"></div>{% endif %}</div></div></td>
+      <td class="n {{ 'bad' if r.contribution > 0 else ('ok' if r.contribution < 0 else 'faint') }}">{{ r.contribution | num }}</td>
+      <td class="n">{% if r.has_events %}<a href="#events" hx-get="/scores/{{ score.score_id }}/events/{{ r.name }}" hx-target="#events" hx-swap="innerHTML">Raw events</a>{% endif %}</td>
+    </tr>
+  {% endfor %}
+{% endmacro %}
+{% set big = rows | selectattr("width", "ge", 5) | list %}
+{% set small = rows | selectattr("width", "lt", 5) | list %}
+
 <div class="head">
   <div>
-    <p class="sub"><a href="/list">My list</a> / <a href="/accounts/{{ score.account_id }}">{{ score.account }}</a></p>
+    <p class="crumb"><a href="/list">My list</a> / <a href="/accounts/{{ score.account_id }}">{{ score.account }}</a></p>
     <h1>Why {{ score.account }} scores {{ score.probability | pct }}</h1>
-    <p class="sub">Scored as of {{ score.as_of | ts }} by model <code>{{ score.model_version }}</code>.</p>
+    <p class="sub">The probability that the next renewal is lost or contracts.
+      {% if score.evidence_state == "insufficient" %}Not enough signal to rank it, so it is grey.{% else %}Rank {{ score.rank_in_book }} in the CSM's book; the top {{ score.k }} is red.{% endif %}</p>
   </div>
   <a class="btn" href="/accounts/{{ score.account_id }}">Account timeline</a>
 </div>
 
-<div class="grid2">
-  <section class="card pad">
-    <div class="muted small">Probability that the next renewal is lost or contracts</div>
-    <div class="big">{{ score.probability | pct }}</div>
-    <p>{% if score.evidence_state == "insufficient" %}<span class="pill grey">grey: not enough signal</span>{% else %}<span class="pill {{ score.colour }}">{{ score.colour }}</span>{% endif %}
-       <span class="muted">rank {{ score.rank_in_book if score.rank_in_book is not none else "none" }} in the CSM's book; the top {{ score.k }} is red.</span></p>
-    <dl class="kv">
-      <dt>ARR</dt><dd>${{ score.arr | money }}</dd>
-      <dt>Renews in</dt><dd>{{ score.days_to_renewal }} days</dd>
-      <dt>Expected ARR at risk</dt><dd><strong>${{ score.rank_score | money }}</strong> (probability × ARR, the rank score)</dd>
-      <dt>Coverage</dt><dd>{{ score.coverage.total_event_count }} events, {{ score.coverage.events_90d }} in 90 days from {{ score.coverage.n_sources_with_events_90d }} sources, {{ score.coverage.account_tenure_days }} days of tenure</dd>
-    </dl>
-  </section>
-  <section class="card pad">
-    <div class="muted small">What this score saw, and how to check it</div>
-    <dl class="kv" style="margin: 8px 0 12px">
-      <dt>Snapshot</dt><dd>{{ score.snapshot_kind }} snapshot as of {{ score.as_of | ts }}</dd>
-      <dt>Events counted</dt><dd>received by {{ score.ingest_watermark | ts }}</dd>
-      <dt>Model</dt><dd><code>{{ score.model_version }}</code></dd>
-    </dl>
-    <p id="reconciliation" class="recon {{ '' if reconciles else 'fail' }}">Reconciliation: expected value <code>{{ score.expected_value | num }}</code> + sum of contributions
-       = <code>{{ total | num }}</code>; stored margin <code>{{ score.margin | num }}</code>:
-       <strong>{{ "reconciles" if reconciles else "DOES NOT RECONCILE" }}</strong>.
-       Reproduce it from a terminal with <code>python -m app rescore {{ score.score_id }}</code>.</p>
-    {% if score.arrived_after %}<p class="late">{{ score.arrived_after }} events that happened by {{ score.as_of | ts }} arrived after this snapshot was built, so this score did not see them. They count from the next night.</p>{% endif %}
-  </section>
+<div class="facts">
+  <div class="fact"><div class="k">Probability</div><div class="v {{ 'hotv' if score.colour == 'red' else '' }}">{{ score.probability | pct }}</div></div>
+  <div class="fact"><div class="k">ARR</div><div class="v">${{ score.arr | money }}</div></div>
+  <div class="fact"><div class="k">ARR at risk (rank score)</div><div class="v">${{ score.rank_score | money }}</div></div>
+  <div class="fact"><div class="k">Renews in</div><div class="v">{{ score.days_to_renewal }} days</div></div>
+  <div class="fact"><div class="k">Coverage</div><div class="v">{{ score.coverage.total_event_count }} events · {{ score.coverage.n_sources_with_events_90d }} sources in 90 days</div></div>
 </div>
 
-{% if score.briefing %}<div class="callout" style="margin-top: 12px">{% if score.narration %}<p style="margin-top: 0"><strong>Summary:</strong> {{ score.narration }} <span class="small muted">Written by {{ score.narration_model }} from the briefing's reasons; every number checked against them.</span></p>{% endif %}<p style="margin: 0"><strong>Briefing:</strong> {{ score.briefing }}</p></div>{% endif %}
-
-<h2>Every factor, largest push towards risk first</h2>
-<p class="note">Contributions are in log-odds, against the average account. Red bars raise this account's risk, green bars lower it. Choose "raw events" to see exactly which events a factor was computed from.</p>
-<div class="card table">
-<table>
-  <thead><tr><th>Factor</th><th class="n">Value</th><th class="n">Contribution</th><th>Effect</th><th></th></tr></thead>
-  <tbody>
-  <tr><td>Average account <span class="fname">expected_value (intercept)</span></td><td></td><td class="n">{{ score.expected_value | num }}</td><td></td><td></td></tr>
-  {% for r in rows %}
-    <tr>
-      <td>{{ r.label[:1] | upper }}{{ r.label[1:] }}<div class="fname">{{ r.name }}</div></td>
-      <td class="n">{% if r.missing %}<span class="muted">{{ r.missing }}</span>{% else %}{{ r.value | num }}{% endif %}</td>
-      <td class="n {{ 'bad' if r.contribution > 0 else ('ok' if r.contribution < 0 else 'muted') }}">{{ r.contribution | num }}</td>
-      <td><div class="contrib"><div class="track">{% if r.contribution > 0 %}<div class="up" style="width: {{ r.width }}%"></div>{% elif r.contribution < 0 %}<div class="down" style="width: {{ r.width }}%"></div>{% endif %}</div></div></td>
-      <td>{% if r.has_events %}<a href="#events" hx-get="/scores/{{ score.score_id }}/events/{{ r.name }}" hx-target="#events" hx-swap="innerHTML">raw events</a>{% endif %}</td>
-    </tr>
-  {% endfor %}
-  <tr><th>Total: the margin</th><td></td><th class="n">{{ total | num }}</th><td></td><td></td></tr>
-  </tbody>
-</table>
+{% if score.briefing %}
+<div class="callout">
+  <div class="label">Briefing</div>
+  {% if score.narration %}<p style="margin: 0 0 6px">{{ score.narration }} <span class="small faint">Written by {{ score.narration_model }} from the briefing's reasons; every number checked against them.</span></p>{% endif %}
+  <p class="muted" style="margin: 0">{{ score.briefing }}</p>
 </div>
-<div id="events" class="card pad muted">Choose "raw events" on a factor to see what is behind it.</div>
+{% endif %}
+
+<div class="card">
+  <div class="card-head"><h2>What moves this score</h2><span class="small faint">log-odds against the average account; red raises the risk, green lowers it</span></div>
+  <div class="table">
+  <table>
+    <thead><tr><th>Factor</th><th class="n">Value</th><th>Effect</th><th class="n">Contribution</th><th></th></tr></thead>
+    <tbody>
+    <tr><td>Average account <span class="fname">expected_value (intercept)</span></td><td></td><td></td><td class="n">{{ score.expected_value | num }}</td><td></td></tr>
+    {{ factor_rows(big) }}
+    <tr><td><b>Total: the margin</b></td><td></td><td class="small faint">all {{ rows | length }} factors, including the small ones</td><td class="n"><b>{{ total | num }}</b></td><td></td></tr>
+    </tbody>
+  </table>
+  </div>
+  {% if small %}
+  <details class="fold">
+    <summary>Show {{ small | length }} smaller factors, each under 5% of the largest effect</summary>
+    <div class="table"><table><tbody>{{ factor_rows(small) }}</tbody></table></div>
+  </details>
+  {% endif %}
+</div>
+
+<div id="events" class="card pad muted">Choose "Raw events" on a factor to see the exact events it was computed from.</div>
+
+<p id="reconciliation" class="recon {{ '' if reconciles else 'fail' }}">Reconciliation: expected value <code>{{ score.expected_value | num }}</code> + sum of contributions
+   = <code>{{ total | num }}</code>; stored margin <code>{{ score.margin | num }}</code>:
+   <strong>{{ "reconciles" if reconciles else "DOES NOT RECONCILE" }}</strong>.
+   {{ score.snapshot_kind | capitalize }} snapshot as of {{ score.as_of | ts }}, events received by {{ score.ingest_watermark | ts }}, model <code>{{ score.model_version }}</code>.
+   Reproduce it from a terminal with <code>python -m app rescore {{ score.score_id }}</code>.</p>
+{% if score.arrived_after %}<p class="late">{{ score.arrived_after }} events that happened by {{ score.as_of | ts }} arrived after this snapshot was built, so this score did not see them. They count from the next night.</p>{% endif %}
 {% endblock %}

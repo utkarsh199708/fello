@@ -71,7 +71,7 @@ Show: `/list`.
 
 Show: the demo account's score page, then one factor's raw events.
 
-- "Every factor, largest push towards risk first. Red bars raise the risk, green bars lower it."
+- "What moves this score, largest push towards risk first. Red bars raise the risk, green bars lower it; the small factors fold away below."
 - The reconciliation box: "The contributions add up to the model's output, checked on the page. `rescore` with this id reproduces the score from a terminal."
 - The snapshot line: "This score saw events received up to this time, from this model."
 - Click "raw events" on the top factor: "These are the actual events behind that number, and how each one was matched to the account."
@@ -95,7 +95,7 @@ Show: `/runs`, then the latest night.
 - "These rows say `schedule`. Nobody pressed anything. The first was 17 October at 02:00 UTC."
 - On a night: the stage bars (ingest, snapshot, score, gate, transitions, policy and tasks, escalation), the transitions and the tasks it raised.
 - "If the data-quality gate trips, the night rolls back and the list keeps the last good night, with a warning. Rerunning a succeeded night writes nothing. A task needs three nights outside the top 8 before it can open again, so scores near the line don't flap."
-- "There is no LLM in the ranking. When a key is set, an LLM writes a two-sentence summary after the night, from the reason list only, and any number it invents gets the summary rejected." If the key is set, open "Read the briefing" on a row and show it.
+- "There is no LLM in the ranking. When a key is set, an LLM writes a two-sentence summary after the night, from the reason list only, and any number it invents gets the summary rejected." If the key is set, open the "···" menu on a row and show it.
 
 ### 6. Does the model work? (1:30 to 3:10)
 
