@@ -60,6 +60,10 @@ Commit `44e031b` was redeployed with fresh volumes at 23:12 UTC on 2026-10-16. F
 
 At 02:00 UTC on 2026-10-17 the scheduler fired the nightly job with nobody involved (`trigger: schedule`). All five tenants succeeded in 21 s. The night took in the events received since the bootstrap night: 422, 205, 139, 161 and 72 for t1 to t5. It quarantined 11, 3, 1, 1 and 2, and rejected 12 replays. The gate's mean-probability shift against the bootstrap night was at most 0.0015. Public `/health` shows that night as the last run. This is milestone M1's "a row nobody triggered".
 
+## Step 5 redeploy, 2026-10-17 (UTC)
+
+Commit `c9a9ae4` was deployed at 06:28 UTC, with the volumes kept. Migration 0004 only adds tables and columns, so the bootstrap night and the unattended 02:00 night are untouched, and the worker found both already succeeded. The first night under policy version 1 is 2026-10-18 at 02:00 UTC. It seeds a task for every top-8 account and writes the first transitions and briefings, with nobody involved. The admin trigger is not used on the live system for a night the scheduler owns: a forced re-run would replace that night's `trigger: schedule`.
+
 ## Affects
 
 TASKS.md items 1.15, 2.15 and 7.1 now mean "redeploy to the VM" rather than Railway. D2 (spend) is approved at about $21 a month, and D3 (project and Postgres) is done.
