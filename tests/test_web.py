@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import os
+import re
 import subprocess
 import sys
 from datetime import timedelta
@@ -54,9 +55,20 @@ def first_csm(tenant_id):
         ).scalar_one()
 
 
+def csrf(client, tenant_id) -> str:
+    """The session's CSRF token, read from the switcher form (task 6.4)."""
+    page = client.get(f"/switch?tenant_id={tenant_id}").text
+    return re.search(r'name="csrf" value="([^"]+)"', page).group(1)
+
+
 def switch(client, tenant_id):
     r = client.post(
-        "/switch", data={"tenant_id": str(tenant_id), "csm_id": str(first_csm(tenant_id))}
+        "/switch",
+        data={
+            "tenant_id": str(tenant_id),
+            "csm_id": str(first_csm(tenant_id)),
+            "csrf": csrf(client, tenant_id),
+        },
     )
     assert r.status_code == 303
     return r
@@ -107,7 +119,8 @@ def test_score_page_shows_margin_and_events(client, seeded):
     score_id, _ = one_score(seeded[0])
     r = client.get(f"/scores/{score_id}")
     assert r.status_code == 200
-    assert "Margin check" in r.text and "account_tenure_days" in r.text
+    assert "Reconciliation" in r.text and "account_tenure_days" in r.text
+    assert "<strong>reconciles</strong>" in r.text  # the page states the check's result
     with tenant_tx(seeded[0]) as conn:
         expected, margin, contributions = conn.execute(
             sa.text("SELECT expected_value, margin, contributions FROM scores WHERE score_id = :s"),
@@ -137,7 +150,12 @@ def test_other_tenants_ids_return_404(client, seeded):
     assert client.get(f"/accounts/{other_account}").status_code == 404
     # The switcher also refuses a CSM that belongs to a different tenant.
     r = client.post(
-        "/switch", data={"tenant_id": str(seeded[0]), "csm_id": str(first_csm(seeded[1]))}
+        "/switch",
+        data={
+            "tenant_id": str(seeded[0]),
+            "csm_id": str(first_csm(seeded[1])),
+            "csrf": csrf(client, seeded[0]),
+        },
     )
     assert r.status_code == 404
 
@@ -260,7 +278,10 @@ def test_unassigned_book_is_reachable(client, seeded, database_url):
             {"t": tid},
         ).scalar_one()
     try:
-        r = client.post("/switch", data={"tenant_id": str(tid), "csm_id": "unassigned"})
+        r = client.post(
+            "/switch",
+            data={"tenant_id": str(tid), "csm_id": "unassigned", "csrf": csrf(client, tid)},
+        )
         assert r.status_code == 303
         page = client.get("/list")
         assert page.status_code == 200 and f"/scores/{sid}" in page.text

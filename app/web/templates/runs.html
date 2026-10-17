@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Runs - Renewal risk{% endblock %}
+{% block body %}
+<h1>Nightly runs</h1>
+<p>Next scheduled run: {{ next_fire | ts if next_fire else "unknown (NIGHTLY_CRON is not a valid cron line)" }}. "schedule" means nobody triggered it.</p>
+<table>
+  <thead><tr><th>Night</th><th>Status</th><th>Trigger</th><th class="n">Events in</th><th class="n">Scored</th><th class="n">Tasks</th><th class="n">Escalated</th><th class="n">Took (s)</th><th>Model</th></tr></thead>
+  <tbody>
+  {% for r in runs %}
+    {% set a = r.counts.get("actions", {}) %}
+    <tr>
+      <td><a href="/runs/{{ r.run_id }}">{{ r.run_date }}</a></td>
+      <td>{{ r.status }}{% if r.error %}<div class="muted">{{ r.error[:160] }}</div>{% endif %}</td>
+      <td>{{ r.trigger }}</td>
+      <td class="n">{{ r.counts.get("events_normalised", "") }}</td>
+      <td class="n">{{ r.counts.get("accounts_scored", "") }}</td>
+      <td class="n">{{ a.get("tasks_created", "") }}</td>
+      <td class="n">{{ a.get("tasks_escalated", "") }}</td>
+      <td class="n">{{ "%.1f" | format((r.stage_ms.values() | sum) / 1000) if r.stage_ms else "" }}</td>
+      <td><code>{{ r.model_version or "" }}</code></td>
+    </tr>
+  {% else %}
+    <tr><td colspan="9" class="muted">No runs yet.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

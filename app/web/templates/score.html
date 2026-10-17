@@ -6,8 +6,16 @@
 <p>Probability <strong>{{ score.probability | pct }}</strong>, rank {{ score.rank_in_book }},
    model <code>{{ score.model_version }}</code>, as of {{ score.as_of | ts }}.
    Events counted were received by {{ score.ingest_watermark | ts }}.</p>
-<p>Margin check: expected value <code>{{ score.expected_value | num }}</code> + sum of contributions
-   = <code>{{ total | num }}</code>; stored margin <code>{{ score.margin | num }}</code>.</p>
+<p>Colour <span class="dot {{ score.colour }}"></span>{{ "grey: not enough signal" if score.evidence_state == "insufficient" else score.colour }}
+   (top {{ score.k }} of the book is red). Coverage: {{ score.coverage.total_event_count }} events,
+   {{ score.coverage.events_90d }} in 90 days from {{ score.coverage.n_sources_with_events_90d }} sources,
+   {{ score.coverage.account_tenure_days }} days of tenure.</p>
+<p id="reconciliation">Reconciliation: expected value <code>{{ score.expected_value | num }}</code> + sum of contributions
+   = <code>{{ total | num }}</code>; stored margin <code>{{ score.margin | num }}</code>:
+   <strong>{{ "reconciles" if reconciles else "DOES NOT RECONCILE" }}</strong>.
+   Reproduce it from the terminal with <code>python -m app rescore {{ score.score_id }}</code>.</p>
+{% if score.arrived_after %}<p class="late">{{ score.arrived_after }} events that happened by {{ score.as_of | ts }} arrived after this snapshot was built, so this score did not see them.</p>{% endif %}
+{% if score.briefing %}<p><strong>Briefing:</strong> {{ score.briefing }}</p>{% endif %}
 <table>
   <thead><tr><th>Feature</th><th class="n">Value</th><th class="n">Contribution</th><th></th></tr></thead>
   <tbody>

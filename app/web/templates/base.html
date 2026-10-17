@@ -6,7 +6,7 @@
   <title>{% block title %}Renewal risk{% endblock %}</title>
   <script src="/static/htmx.min.js"></script>
   <style>
-    body { font: 15px/1.45 system-ui, sans-serif; margin: 0 auto; max-width: 960px; padding: 16px; color: #1c2430; }
+    body { font: 15px/1.45 system-ui, sans-serif; margin: 0 auto; max-width: 1100px; padding: 16px; color: #1c2430; }
     nav a { margin-right: 14px; }
     table { border-collapse: collapse; width: 100%; margin: 12px 0; }
     th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #dde2e8; vertical-align: top; }
@@ -14,10 +14,26 @@
     .muted { color: #66707d; }
     pre { margin: 0; white-space: pre-wrap; font-size: 12px; }
     code { background: #eef1f5; padding: 1px 4px; border-radius: 3px; }
+    .stale { background: #fff4e5; border: 1px solid #f0b25a; padding: 8px 10px; border-radius: 4px; }
+    .fresh { color: #66707d; }
+    .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+    .red { background: #c62828; } .yellow { background: #f2b705; } .green { background: #2e7d32; } .grey { background: #9aa3ad; }
+    .badge { font-size: 12px; padding: 1px 6px; border-radius: 9px; background: #eef1f5; }
+    .badge.escalated { background: #c62828; color: #fff; }
+    .late { color: #a15c00; font-size: 12px; }
+    form.inline { display: inline; }
+    form.inline input[type=text] { width: 140px; }
   </style>
 </head>
 <body>
-  <nav><a href="/list">Monday list</a><a href="/switch">Switch tenant / CSM</a><a href="/health">Health</a></nav>
+  <nav><a href="/list">Monday list</a><a href="/runs">Runs</a><a href="/quarantine">Quarantine</a><a href="/misses">Worst misses</a><a href="/switch">Switch tenant / CSM</a><a href="/health">Health</a></nav>
+  {% if staleness %}
+    {% set st = staleness %}
+    <p class="{{ 'stale' if st.stale else 'fresh' }}" id="staleness">
+      Scores as of {{ st.scores_as_of | ts if st.scores_as_of else "never" }}{% if st.last %}, last run {{ st.last.status }}{% if st.last.finished_at %} at {{ st.last.finished_at | ts }}{% endif %}{% endif %}.
+      {% if st.stale %}<strong>These may be out of date:</strong> {% if st.last and st.last.status != "succeeded" %}the latest night did not succeed, so the list shows the last good night.{% else %}no night has succeeded in the last day.{% endif %} See <a href="/runs">runs</a>.{% endif %}
+    </p>
+  {% endif %}
   {% block body %}{% endblock %}
 </body>
 </html>

@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Run - Renewal risk{% endblock %}
+{% block body %}
+<h1>Night of {{ run.run_date }}</h1>
+<p>Status <strong>{{ run.status }}</strong>, trigger {{ run.trigger }}, as of {{ run.as_of | ts }},
+   model <code>{{ run.model_version or "none" }}</code>, policy {{ run.policy_version or "none" }}.
+   Started {{ run.started_at | ts }}, finished {{ run.finished_at | ts if run.finished_at else "not yet" }}.
+   Events received by {{ run.ingest_watermark | ts if run.ingest_watermark else "none" }} were counted.</p>
+{% if run.error %}<p class="stale">{{ run.error }}</p>{% endif %}
+<h2>Stages</h2>
+<table>
+  <thead><tr><th>Stage</th><th class="n">ms</th></tr></thead>
+  <tbody>{% for stage, ms in run.stage_ms.items() %}<tr><td>{{ stage | replace("_", " ") }}</td><td class="n">{{ ms }}</td></tr>{% endfor %}</tbody>
+</table>
+<p>Transitions: {{ run.transitions.total }} accounts compared with the night before, {{ run.transitions.entered }} entered a top k, {{ run.transitions.left }} left one.</p>
+<h2>Tasks raised this night ({{ run.tasks | length }})</h2>
+<table>
+  <thead><tr><th>Account</th><th>Rule</th><th>Queue</th><th>Status now</th></tr></thead>
+  <tbody>{% for t in run.tasks %}<tr><td><a href="/accounts/{{ t.account_id }}">{{ t.account }}</a></td><td>{{ t.rule_fired }}</td><td>{{ t.queue }}</td><td>{{ t.status }}</td></tr>
+  {% else %}<tr><td colspan="4" class="muted">None.</td></tr>{% endfor %}</tbody>
+</table>
+<h2>Counts</h2>
+<pre>{{ run.counts | tojson(indent=2) }}</pre>
+{% endblock %}

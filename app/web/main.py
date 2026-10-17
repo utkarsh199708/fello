@@ -8,13 +8,18 @@ HttpOnly) holding ``tenant_id`` and ``csm_id``. The switcher page is the only pl
 tenant id from a request, and all it does is validate it and write the cookie. Every other route
 takes the tenant from the cookie and reads through ``tenant_tx``, so row-level security means an
 id belonging to another tenant finds nothing and answers 404.
+
+Every form POST carries a CSRF token bound to the session (task 6.4), compared in constant
+time. The one JSON endpoint, the admin trigger, is CSRF-safe by content type instead.
 """
 
 from __future__ import annotations
 
 import os
+import secrets
 import sys
 import uuid
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -67,6 +72,41 @@ def _fmt_ts(value: Any) -> str:
     return "" if value is None else value.strftime("%Y-%m-%d %H:%M UTC")
 
 
+def now() -> datetime:
+    """The clock the pages use: ``CLOCK_OVERRIDE`` when set, like the job."""
+    override = os.environ.get("CLOCK_OVERRIDE", "").strip()
+    if override:
+        from app.config import parse_utc
+
+        return parse_utc(override)
+    return datetime.now(UTC)
+
+
+def business_days(start: date, end: date) -> int:
+    """Weekdays in ``[start, end)``: a task's age as the escalation rule counts it.
+
+    Plain Python, so the web process never imports numpy (the job uses ``np.busday_count``, which
+    gives the same count).
+    """
+    if end <= start:
+        return 0
+    weeks, rest = divmod((end - start).days, 7)
+    extra = sum((start + timedelta(days=i)).weekday() < 5 for i in range(rest))
+    return weeks * 5 + extra
+
+
+def next_fire() -> datetime | None:
+    """The next time the worker's ``NIGHTLY_CRON`` fires, in UTC."""
+    from apscheduler.triggers.cron import CronTrigger
+
+    cron = os.environ.get("NIGHTLY_CRON", "").strip() or "0 2 * * *"
+    try:
+        trigger = CronTrigger.from_crontab(cron, timezone=UTC)
+    except ValueError:
+        return None
+    return trigger.get_next_fire_time(None, now())
+
+
 def create_app() -> FastAPI:
     """Build the app. Fails at startup if ``BASIC_AUTH_PASSWORD`` or ``SESSION_SECRET`` is unset."""
     password = required_password()
@@ -88,6 +128,27 @@ def create_app() -> FastAPI:
 
     templates = Jinja2Templates(directory=HERE / "templates")
     templates.env.filters.update(money=_fmt_money, pct=_fmt_pct, num=_fmt_num, ts=_fmt_ts)
+
+    def csrf_token(request: Request) -> str:
+        """The session's CSRF token, created on first use."""
+        token = request.session.get("csrf")
+        if not token:
+            token = secrets.token_urlsafe(32)
+            request.session["csrf"] = token
+        return token
+
+    def require_csrf(request: Request, token: str | None) -> None:
+        expected = request.session.get("csrf")
+        if not expected or not token or not secrets.compare_digest(expected, token):
+            raise HTTPException(403, "missing or wrong CSRF token")
+
+    def page(request: Request, name: str, context: dict, tenant_id=None) -> Response:
+        """Render with the CSRF token and, inside a tenant, the staleness header."""
+        context = {"csrf": csrf_token(request), **context}
+        if tenant_id is not None:
+            with tenant_tx(tenant_id) as conn:
+                context["staleness"] = q.staleness(conn, now())
+        return templates.TemplateResponse(request, name, context)
 
     def selected(request: Request) -> tuple[uuid.UUID, uuid.UUID | str] | None:
         """The (tenant, csm) in the cookie, or None if there is none or it is malformed.
@@ -124,17 +185,17 @@ def create_app() -> FastAPI:
                 raise HTTPException(404)
             with tenant_tx(chosen) as conn:
                 csms = q.list_csms(conn)
-        return templates.TemplateResponse(
-            request, "switch.html", {"tenants": tenants, "chosen": chosen, "csms": csms}
-        )
+        return page(request, "switch.html", {"tenants": tenants, "chosen": chosen, "csms": csms})
 
     @app.post("/switch")
     def switch_submit(
         request: Request,
         tenant_id: Annotated[uuid.UUID, Form()],
         csm_id: Annotated[str, Form()],
+        csrf: Annotated[str | None, Form()] = None,
     ) -> Response:
         """Validate the pair inside the tenant's transaction, then write the cookie."""
+        require_csrf(request, csrf)
         with get_engine().connect() as conn:
             known = q.tenant_exists(conn, tenant_id)
         if not known:
@@ -153,11 +214,12 @@ def create_app() -> FastAPI:
         return RedirectResponse("/list", status_code=303)
 
     @app.get("/list", response_class=HTMLResponse)
-    def ranked(request: Request) -> Response:
+    def ranked(request: Request, sort: str = "rank_score") -> Response:
         ids = selected(request)
         if ids is None:
             return to_switcher()
         tenant_id, csm_id = ids
+        sort = sort if sort in q.SORTS else "rank_score"
         with tenant_tx(tenant_id) as conn:
             tenant = q.tenant_name(conn)
             if csm_id == q.UNASSIGNED:
@@ -165,15 +227,56 @@ def create_app() -> FastAPI:
             else:
                 csm = q.get_csm(conn, csm_id)
             as_of = q.latest_as_of(conn)
-            rows = q.ranked_list(conn, csm_id, as_of) if as_of and csm else []
+            rows = q.ranked_list(conn, csm_id, as_of, sort) if as_of and csm else []
             quality = q.data_quality(conn)
         if csm is None:  # the cookie names a CSM this tenant does not have
             return to_switcher()
-        return templates.TemplateResponse(
+        today = now().date()
+        for r in rows:
+            r["marker"] = q.marker(r)
+            if r["task_run_date"] is not None:
+                r["task_age"] = business_days(r["task_run_date"], today)
+        ranked_rows = [r for r in rows if r["evidence_state"] != "insufficient"]
+        thin = [r for r in rows if r["evidence_state"] == "insufficient"]
+        return page(
             request,
             "list.html",
-            {"tenant": tenant, "csm": csm, "as_of": as_of, "rows": rows, "quality": quality},
+            {
+                "tenant": tenant,
+                "csm": csm,
+                "as_of": as_of,
+                "rows": ranked_rows,
+                "thin": thin,
+                "quality": quality,
+                "sort": sort,
+                "sorts": list(q.SORTS),
+            },
+            tenant_id,
         )
+
+    @app.post("/tasks/{task_id}/status")
+    def task_status(
+        request: Request,
+        task_id: uuid.UUID,
+        status: Annotated[str, Form()],
+        csrf: Annotated[str | None, Form()] = None,
+        reason: Annotated[str | None, Form()] = None,
+    ) -> Response:
+        """A CSM's button: done, snooze a week, or dismiss with a one-line reason."""
+        require_csrf(request, csrf)
+        ids = selected(request)
+        if ids is None:
+            return to_switcher()
+        reason = (reason or "").strip()[:200] or None
+        if status == "dismissed" and reason is None:
+            raise HTTPException(400, "a dismissal needs a reason")
+        if status not in q.TASK_ACTIONS:
+            raise HTTPException(400, "unknown status")
+        with tenant_tx(ids[0]) as conn:
+            changed = q.set_task_status(conn, task_id, status, reason, str(ids[1]))
+        if not changed:
+            raise HTTPException(404)
+        return RedirectResponse("/list", status_code=303)
 
     @app.get("/scores/{score_id}", response_class=HTMLResponse)
     def score_page(request: Request, score_id: uuid.UUID) -> Response:
@@ -197,10 +300,11 @@ def create_app() -> FastAPI:
             for f in FEATURES
         ]
         total = score["expected_value"] + sum(r["contribution"] for r in rows)
-        return templates.TemplateResponse(
+        reconciles = abs(total - score["margin"]) < 1e-6
+        return page(
             request,
             "score.html",
-            {"score": score, "rows": rows, "total": total},
+            {"score": score, "rows": rows, "total": total, "reconciles": reconciles},
         )
 
     @app.get("/scores/{score_id}/events/{feature}", response_class=HTMLResponse)
@@ -240,7 +344,8 @@ def create_app() -> FastAPI:
             latest = q.latest_as_of(conn)
             contracts = q.account_contracts(conn, account_id, latest) if latest else []
             timeline = q.account_timeline(conn, account_id, latest) if latest else []
-        return templates.TemplateResponse(
+            tasks = q.account_tasks(conn, account_id)
+        return page(
             request,
             "account.html",
             {
@@ -248,9 +353,53 @@ def create_app() -> FastAPI:
                 "contracts": contracts,
                 "scores": scores,
                 "timeline": timeline,
+                "tasks": tasks,
                 "as_of": latest,
             },
+            ids[0],
         )
+
+    @app.get("/runs", response_class=HTMLResponse)
+    def runs_page(request: Request) -> Response:
+        """The last 30 nights and the next scheduled fire (task 6.7)."""
+        ids = selected(request)
+        if ids is None:
+            return to_switcher()
+        with tenant_tx(ids[0]) as conn:
+            runs = q.run_history(conn)
+        return page(request, "runs.html", {"runs": runs, "next_fire": next_fire()}, ids[0])
+
+    @app.get("/runs/{run_id}", response_class=HTMLResponse)
+    def run_page(request: Request, run_id: uuid.UUID) -> Response:
+        ids = selected(request)
+        if ids is None:
+            return to_switcher()
+        with tenant_tx(ids[0]) as conn:
+            run = q.get_run(conn, run_id)
+        if run is None:
+            raise HTTPException(404)
+        return page(request, "run.html", {"run": run}, ids[0])
+
+    @app.get("/quarantine", response_class=HTMLResponse)
+    def quarantine_page(request: Request) -> Response:
+        """What the pipeline could not match or read, by reason and source (task 6.8)."""
+        ids = selected(request)
+        if ids is None:
+            return to_switcher()
+        with tenant_tx(ids[0]) as conn:
+            summary = q.quarantine_summary(conn)
+            quality = q.data_quality(conn)
+        return page(request, "quarantine.html", {"summary": summary, "quality": quality}, ids[0])
+
+    @app.get("/misses", response_class=HTMLResponse)
+    def misses_page(request: Request) -> Response:
+        """Lost renewals that were scored but never reached their CSM's top k (task 6.8)."""
+        ids = selected(request)
+        if ids is None:
+            return to_switcher()
+        with tenant_tx(ids[0]) as conn:
+            misses = q.worst_misses(conn)
+        return page(request, "misses.html", {"misses": misses}, ids[0])
 
     @app.post("/admin/jobs/nightly")
     async def admin_nightly(request: Request) -> JSONResponse:

@@ -4,29 +4,59 @@
 <h1>Monday list</h1>
 <p>{{ tenant }}, {{ csm.name }}.
 {% if as_of %}Scores as of {{ as_of | ts }}.{% else %}<span class="muted">No scores yet.</span>{% endif %}</p>
+<p class="muted">Sort by:
+{% for s in sorts %}{% if s == sort %}<strong>{{ s | replace("_", " ") }}</strong>{% else %}<a href="/list?sort={{ s }}">{{ s | replace("_", " ") }}</a>{% endif %}{% if not loop.last %} · {% endif %}{% endfor %}.
+Escalated tasks always come first. Markers compare with the week's first night.</p>
 <table>
-  <thead><tr><th class="n">Rank</th><th>Colour</th><th>Account</th><th class="n">Probability</th><th class="n">ARR</th><th class="n">Days to renewal</th><th class="n">Rank score</th></tr></thead>
+  <thead><tr><th class="n">Rank</th><th>Colour</th><th>Account</th><th class="n">Probability</th><th class="n">ARR</th><th class="n">Days to renewal</th><th class="n">Rank score</th><th>Since Monday</th><th>Task</th></tr></thead>
   <tbody>
   {% for r in rows %}
     <tr>
       <td class="n">{{ r.rank_in_book if r.rank_in_book is not none else "" }}</td>
-      <td>{% if r.evidence_state == "insufficient" %}<span class="muted">grey: not enough signal ({{ r.event_count }} events)</span>{% else %}{{ r.colour }}{% endif %}</td>
+      <td><span class="dot {{ r.colour }}"></span>{{ r.colour }}</td>
       <td><a href="/accounts/{{ r.account_id }}">{{ r.account }}</a></td>
       <td class="n"><a href="/scores/{{ r.score_id }}">{{ r.probability | pct }}</a></td>
       <td class="n">{{ r.arr | money }}</td>
       <td class="n">{{ r.days_to_renewal if r.days_to_renewal is not none else "" }}</td>
       <td class="n">{{ r.rank_score | money }}</td>
+      <td>{{ r.marker }}</td>
+      <td>
+        {% if r.task_id %}
+          <span class="badge {{ r.task_status }}">{{ r.task_status }}</span>
+          <span class="muted">{{ r.rule_fired }}, {{ r.task_age }} business days</span>
+          {% if r.briefing %}<details><summary>Why</summary><div class="muted">{{ r.briefing }}</div></details>{% endif %}
+          {% if r.task_status != "snoozed" %}
+          <form class="inline" method="post" action="/tasks/{{ r.task_id }}/status"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="status" value="done"><button>Done</button></form>
+          <form class="inline" method="post" action="/tasks/{{ r.task_id }}/status"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="status" value="snoozed"><button>Snooze a week</button></form>
+          {% endif %}
+          <form class="inline" method="post" action="/tasks/{{ r.task_id }}/status"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="status" value="dismissed"><input type="text" name="reason" placeholder="why dismiss?" required maxlength="200"><button>Dismiss</button></form>
+        {% endif %}
+      </td>
     </tr>
   {% else %}
-    <tr><td colspan="7" class="muted">No accounts in this book.</td></tr>
+    <tr><td colspan="9" class="muted">No accounts in this book.</td></tr>
   {% endfor %}
   </tbody>
 </table>
-<p class="muted">Rank score is probability x ARR. Click a probability to see why.</p>
+<p class="muted">Rank score is probability x ARR, the expected ARR at risk. Click a probability to see why.</p>
+
+<h2>Not enough signal ({{ thin | length }})</h2>
+<p class="muted">Accounts younger than 30 days or with fewer than 5 events. They are scored but not ranked, and never shown as green.</p>
+<table>
+  <thead><tr><th>Account</th><th class="n">Events on record</th><th class="n">Probability</th><th class="n">ARR</th><th class="n">Days to renewal</th></tr></thead>
+  <tbody>
+  {% for r in thin %}
+    <tr><td><a href="/accounts/{{ r.account_id }}">{{ r.account }}</a></td><td class="n">{{ r.event_count }}</td><td class="n"><a href="/scores/{{ r.score_id }}">{{ r.probability | pct }}</a></td><td class="n">{{ r.arr | money }}</td><td class="n">{{ r.days_to_renewal }}</td></tr>
+  {% else %}
+    <tr><td colspan="5" class="muted">None.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
 {% set qr = {"unknown_native_key": "key not in the crosswalk", "unknown_domain": "email domain matches no account", "ambiguous_domain": "email domain shared by several accounts", "no_identity": "no key and no email"} %}
 {% set rr = {"duplicate_event_id": "delivered twice", "unknown_event_type": "unknown event type", "unknown_schema_version": "unknown payload version", "unparseable_payload": "unreadable payload"} %}
 <p class="muted" id="data-quality">Across this organisation, {{ "{:,}".format(quality.matched) }} events reached the scores.
-{{ "{:,}".format(quality.quarantined_total) }} could not be matched to an account and are held in quarantine{% if quality.quarantined %} ({% for reason, n in quality.quarantined.items() %}{{ "{:,}".format(n) }} {{ qr.get(reason, reason) }}{% if not loop.last %}; {% endif %}{% endfor %}){% endif %}.
+{{ "{:,}".format(quality.quarantined_total) }} could not be matched to an account and are held in <a href="/quarantine">quarantine</a>{% if quality.quarantined %} ({% for reason, n in quality.quarantined.items() %}{{ "{:,}".format(n) }} {{ qr.get(reason, reason) }}{% if not loop.last %}; {% endif %}{% endfor %}){% endif %}.
 {{ "{:,}".format(quality.rejected_total) }} were set aside{% if quality.rejected %} ({% for reason, n in quality.rejected.items() %}{{ "{:,}".format(n) }} {{ rr.get(reason, reason) }}{% if not loop.last %}; {% endif %}{% endfor %}){% endif %}.
 Scores never see either.</p>
 {% endblock %}

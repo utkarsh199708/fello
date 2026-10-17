@@ -8,17 +8,27 @@
   <thead><tr><th class="n">Cycle</th><th>Start</th><th>End</th><th class="n">ARR</th></tr></thead>
   <tbody>{% for c in contracts %}<tr><td class="n">{{ c.cycle_number }}</td><td>{{ c.start_date }}</td><td>{{ c.end_date }}</td><td class="n">{{ c.arr | money }}</td></tr>{% endfor %}</tbody>
 </table>
+<h2>Tasks</h2>
+<table>
+  <thead><tr><th>Raised</th><th>Status</th><th>Rule</th><th>Queue</th><th class="n">Probability</th><th>Briefing and history</th></tr></thead>
+  <tbody>{% for t in tasks %}<tr>
+    <td>{{ t.run_date }}</td>
+    <td><span class="badge {{ t.status }}">{{ t.status }}</span>{% if t.snoozed_until %} until {{ t.snoozed_until }}{% endif %}{% if t.dismissed_reason %}: {{ t.dismissed_reason }}{% endif %}</td>
+    <td>{{ t.rule_fired }}</td><td>{{ t.queue }}</td><td class="n">{{ t.probability | pct }}</td>
+    <td>{% if t.briefing %}<div>{{ t.briefing }}</div>{% endif %}<div class="muted">{% for e in t.events %}{{ e.created_at | ts }} {{ e.kind | replace("_", " ") }}{% if e.detail.reason %} ({{ e.detail.reason }}){% endif %}{% if not loop.last %}; {% endif %}{% endfor %}</div></td>
+  </tr>{% else %}<tr><td colspan="6" class="muted">No tasks.</td></tr>{% endfor %}</tbody>
+</table>
 <h2>Score history</h2>
 <table>
-  <thead><tr><th>As of</th><th class="n">Probability</th><th class="n">Rank</th><th>Model</th></tr></thead>
-  <tbody>{% for s in scores %}<tr><td><a href="/scores/{{ s.score_id }}">{{ s.as_of | ts }}</a></td><td class="n">{{ s.probability | pct }}</td><td class="n">{{ s.rank_in_book }}</td><td><code>{{ s.model_version }}</code></td></tr>
-  {% else %}<tr><td colspan="4" class="muted">Not scored yet.</td></tr>{% endfor %}</tbody>
+  <thead><tr><th>As of</th><th class="n">Probability</th><th class="n">Rank</th><th>Colour</th><th>Model</th></tr></thead>
+  <tbody>{% for s in scores %}<tr><td><a href="/scores/{{ s.score_id }}">{{ s.as_of | ts }}</a></td><td class="n">{{ s.probability | pct }}</td><td class="n">{{ s.rank_in_book if s.rank_in_book is not none else "" }}</td><td><span class="dot {{ s.colour }}"></span>{{ "not enough signal" if s.evidence_state == "insufficient" else s.colour }}</td><td><code>{{ s.model_version }}</code></td></tr>
+  {% else %}<tr><td colspan="5" class="muted">Not scored yet.</td></tr>{% endfor %}</tbody>
 </table>
 <h2>Timeline</h2>
-<p class="muted">Events received by {{ as_of | ts }}, newest first, at most 200.</p>
+<p class="muted">Events received by {{ as_of | ts }}, newest first, at most 200. "Arrived late" marks an event that reached us after a score that would have counted it.</p>
 <table>
-  <thead><tr><th>Occurred</th><th>Source</th><th>Type</th><th>Matched by</th><th>Payload</th></tr></thead>
-  <tbody>{% for e in timeline %}<tr><td>{{ e.occurred_at | ts }}</td><td>{{ e.source }}</td><td>{{ e.event_type }}</td><td>{{ e.match_method }}</td><td><pre>{{ e.payload | tojson }}</pre></td></tr>
-  {% else %}<tr><td colspan="5" class="muted">No events.</td></tr>{% endfor %}</tbody>
+  <thead><tr><th>Occurred</th><th>Received</th><th>Source</th><th>Type</th><th>Matched by</th><th>Payload</th></tr></thead>
+  <tbody>{% for e in timeline %}<tr><td>{{ e.occurred_at | ts }}</td><td>{{ e.received_at | ts }}{% if e.late_for %}<div class="late">arrived late: missed the score of {{ e.late_for | ts }}</div>{% endif %}</td><td>{{ e.source }}</td><td>{{ e.event_type }}</td><td>{{ e.match_method }}</td><td><pre>{{ e.payload | tojson }}</pre></td></tr>
+  {% else %}<tr><td colspan="6" class="muted">No events.</td></tr>{% endfor %}</tbody>
 </table>
 {% endblock %}

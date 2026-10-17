@@ -33,6 +33,11 @@ from app.ml.feature_spec import FEATURE_SOURCE
 ESCALATE_AFTER_BUSINESS_DAYS = 5
 ESCALATE_WITHIN_RENEWAL_DAYS = 60
 TOP_REASONS = 5
+# Reasons a CSM can act on: the signals from each source, and a past contraction. Contract and
+# coverage features (ARR, days to renewal, tenure, event counts) shape the score too, and their
+# contributions stay on the score row, but "your contract is large" is not a reason to call.
+REASON_FEATURES = frozenset(FEATURE_SOURCE) | {"prior_contraction"}
+PERCENT_FEATURES = frozenset({"seat_utilisation", "usage_change_last_month_vs_prior_3"})
 BRIEFING_TEMPLATE = "reasons-v1"
 
 # Plain words for the reasons a CSM reads. A feature not listed is shown by its name.
@@ -203,7 +208,10 @@ def build_history(conn, scores, prev_runs) -> dict[UUID, History]:
 def reasons_of(score, features: dict) -> list[dict]:
     """The deterministic reason list: the features pushing risk up most, with their values."""
     contrib = score.contributions
-    up = sorted(((f, v) for f, v in contrib.items() if v > 0), key=lambda fv: -fv[1])
+    up = sorted(
+        ((f, v) for f, v in contrib.items() if v > 0 and f in REASON_FEATURES),
+        key=lambda fv: -fv[1],
+    )
     out = []
     for feature, value in up[:TOP_REASONS]:
         source = FEATURE_SOURCE.get(feature)
@@ -239,7 +247,14 @@ def render_briefing(score, reasons: list[dict]) -> str:
             parts.append(f"{r['label']}: {what}")
         else:
             value = r["value"]
-            shown = f"{value:,.2f}".rstrip("0").rstrip(".") if isinstance(value, float) else value
+            if r.get("feature") in PERCENT_FEATURES:
+                shown = (
+                    f"{value:+.0%}" if r["feature"].startswith("usage_change") else f"{value:.0%}"
+                )
+            elif isinstance(value, float):
+                shown = f"{value:,.2f}".rstrip("0").rstrip(".")
+            else:
+                shown = value
             parts.append(f"{r['label']}: {shown}")
     return head + " What raises the risk most: " + "; ".join(parts) + "."
 

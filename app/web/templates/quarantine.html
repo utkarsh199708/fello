@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Quarantine - Renewal risk{% endblock %}
+{% block body %}
+<h1>What the scores could not use</h1>
+<p>{{ "{:,}".format(quality.matched) }} events were matched to an account. {{ "{:,}".format(quality.quarantined_total) }} are in quarantine because no account could be found for them, and {{ "{:,}".format(quality.rejected_total) }} were rejected (replays, or payloads no schema version could read). Neither kind ever reaches a score.</p>
+<h2>Quarantine by reason and source</h2>
+<table>
+  <thead><tr><th>Reason</th><th>Source</th><th class="n">Events</th></tr></thead>
+  <tbody>{% for r in summary.by_reason %}<tr><td>{{ r.reason | replace("_", " ") }}</td><td>{{ r.source }}</td><td class="n">{{ "{:,}".format(r.n) }}</td></tr>
+  {% else %}<tr><td colspan="3" class="muted">Nothing in quarantine.</td></tr>{% endfor %}</tbody>
+</table>
+<h2>Rejected by reason and source</h2>
+<table>
+  <thead><tr><th>Reason</th><th>Source</th><th class="n">Events</th></tr></thead>
+  <tbody>{% for r in summary.rejects %}<tr><td>{{ r.reason | replace("_", " ") }}</td><td>{{ r.source }}</td><td class="n">{{ "{:,}".format(r.n) }}</td></tr>
+  {% else %}<tr><td colspan="3" class="muted">Nothing rejected.</td></tr>{% endfor %}</tbody>
+</table>
+<h2>Most recent quarantined events</h2>
+<table>
+  <thead><tr><th>Received</th><th>Source</th><th>Type</th><th>Reason</th><th>What was tried</th></tr></thead>
+  <tbody>{% for e in summary.recent %}<tr><td>{{ e.received_at | ts }}</td><td>{{ e.source }}</td><td>{{ e.event_type }}</td><td>{{ e.reason | replace("_", " ") }}</td><td><pre>{{ e.detail | tojson }}</pre></td></tr>
+  {% else %}<tr><td colspan="5" class="muted">None.</td></tr>{% endfor %}</tbody>
+</table>
+{% endblock %}
