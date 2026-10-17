@@ -1,20 +1,110 @@
 # Monday list
 
-A ranked Monday list for customer success managers: the accounts most worth working this week, in order, with reasons that trace back to raw events. Built for the Fello GTM AI take-home.
+A ranked Monday list for customer success managers: the accounts most worth working this week, in order, each with reasons that click through to the raw events behind them.
 
-Status: Steps 0 to 6 of [docs/TASKS.md](docs/TASKS.md) are built and tested. Step 1 is the walking skeleton: generate, load, resolve, features, train, score, nightly job, worker and web. It is live on one GCP VM at https://136-83-131-193.sslip.io, behind the shared password ([docs/decisions/0002-host-on-gcp-vm.md](docs/decisions/0002-host-on-gcp-vm.md)). Step 2 makes the generator emit every kind of mess in PLAN.md section 5. Step 3 gives each kind a handler and a test: dedup, schema dispatch, email pseudonymisation and a data-quality gate ([docs/decisions/step-3-log.md](docs/decisions/step-3-log.md)). Step 4 replaces the Step 1 logistic regression with LightGBM, adds the full feature set and stores an evaluation fit beside the live one. The holdout evaluation is below. Step 5 makes the night agentic: rank transitions, a policy that raises tasks without flapping, escalation, briefings and an admin trigger ([docs/decisions/step-5-log.md](docs/decisions/step-5-log.md)). Step 6 completes the dashboard: re-sortable list with since-Monday markers, a not-enough-signal bucket, task buttons behind CSRF, run history with a staleness header, and quarantine and worst-misses pages ([docs/decisions/step-6-log.md](docs/decisions/step-6-log.md)). The solution brief, written before any code, is [docs/brief.md](docs/brief.md). The design is [docs/PLAN.md](docs/PLAN.md).
+A nightly job rescores every account with nobody pressing a button, opens a task when an account enters its CSM's top 8, escalates tasks nobody touched, and logs every decision.
+
+Built for the Fello GTM AI take-home. The solution brief, written before any code, is [docs/brief.md](docs/brief.md) (it is the first commit). The design is [docs/PLAN.md](docs/PLAN.md), and the build log is [docs/decisions/](docs/decisions/).
+
+- **Live:** https://136-83-131-193.sslip.io, behind one shared password. The username is ignored. The password is given with the submission, and `/health` is open.
+- **In the app:** pick an organisation and a CSM on the switcher. The list, an account, a score's drill-down, the run history, quarantine and worst misses are one click away. Every number links back to what was computed from what.
+- **All data is synthetic:** 5 organisations, 43 CSMs, 5,000 accounts and about 192,000 events from five sources.
 
 ## What I decided
 
-To be written in Step 7. Until then the decisions and their reasons are in [docs/PLAN.md](docs/PLAN.md) sections 1 and 4 to 8, and each decision taken during the build is logged in [docs/decisions/](docs/decisions/).
+**The problem, and so the product.** The request was a red/yellow/green health score with auto-email on red. The problem is prioritisation: each CSM can work perhaps 8 of 120 accounts a week, and the signals that predict a lost renewal are spread over five systems that nobody joins. So the product is a ranked list per CSM with reasons, not a score per account ([docs/brief.md](docs/brief.md)).
+
+**Where I disagreed with the request, and what replaced it.**
+
+- **No email to customers.** It fails three ways:
+  - wrong recipient: the contact on file is often the champion who left;
+  - wrong message: a ticket backlog and a failed payment need different conversations;
+  - wrong trigger: accounts near a line on a noisy score flip week to week.
+
+  An account entering a CSM's top 8 gets a task instead. A task untouched for 5 business days within 60 days of renewal is escalated and pinned to the top. That is what "nothing slips" means here: nothing goes unseen, and nothing is dropped silently.
+- **Colour is a display derived from rank.** Red is the top 8 of the CSM's book, yellow the next 16, green the rest. An account with not enough signal (under 30 days or under 5 events) is grey and never green. The probability and the dollars at risk carry the absolute picture.
+- **Rank by expected ARR at risk**, probability times ARR, with one-click re-sort by probability, ARR or renewal date.
+- **The label is the outcome of the next renewal,** lost or contracted below 70% of the prior ARR, whenever that renewal falls. A 90-day window would mark every account further out as safe.
+
+**How it is built.** Python 3.11, FastAPI with Jinja2 and vendored htmx, Postgres 16, SQLAlchemy Core and Alembic, LightGBM, and an APScheduler worker. It is one image, run as a web process and a worker process.
+
+- **Multi-tenancy is enforced in the database.** Every tenant table has `FORCE ROW LEVEL SECURITY` with one policy on `app.tenant_id`, set only by `tenant_tx` through `set_config(..., true)`. With no context set, a query sees zero rows. The tenant comes from a signed, SameSite=Strict session cookie, never from a URL. Another tenant's id answers 404.
+- **Point in time.** A feature at `as_of` sees only events received by `as_of`, with windows on `occurred_at`. Snapshots and scores are never rewritten, and the database grants no UPDATE or DELETE on them. A late event changes tonight's snapshot, never last week's.
+- **The model is fitted, global and reproducible.** One LightGBM over all tenants, without `tenant_id` as a feature. It is deterministic, with reasons from `pred_contrib` that add up exactly to the margin. Each version stores its booster text, features, row counts per tenant and metrics. An evaluation fit on older renewal cycles is stored beside the live refit, and logistic regression stays as the challenger. `python -m app rescore <score_id>` reproduces any stored score. The same config trains the same version hash on Windows and in the Linux image.
+- **The night is a staged, idempotent job:** ingest, snapshot, score, data-quality gate, transitions, policy and tasks, escalation.
+  - A rerun of a succeeded night is a no-op, and a failed or blocked night is re-run.
+  - A tripped gate publishes nothing.
+  - `policy.py` (pure, version 1) holds the three-night anti-flap rule, seeding, dedup, dismissal suppression and a per-queue budget.
+- **Traceability.** Every CSM-visible thing has a row and a foreign key back to what produced it: raw event, normalised event (with how it was matched), snapshot (with its ingest watermark), score (with the full contribution vector), model version, transition, task, briefing, task events and job run.
+
+**Who connects as which database role.**
+
+| Process | Role | Can do |
+|---|---|---|
+| `migrate` (worker start) | `app_owner` | Owns the tables and runs Alembic. FORCE RLS binds it too |
+| web, nightly job, loader | `app` | Reads and writes within one tenant through `tenant_tx`. No UPDATE or DELETE on snapshots and scores |
+| trainer, `evaluate`, `rescore` | `app_batch` | `BYPASSRLS`, the one deliberate cross-tenant reader. Writes only `model_versions` |
+| test teardown | the Postgres superuser | Purges test tenants. Never used by the app |
+
+**What the pipeline does with the mess** ([docs/decisions/step-2-log.md](docs/decisions/step-2-log.md), [step-3-log.md](docs/decisions/step-3-log.md)):
+
+- **Identity.** Each event is matched by the crosswalk, then by email domain. Otherwise it goes to quarantine with a reason, and the count is on the list page.
+- **Duplicates.** An exact replay is rejected and the first delivery kept. A re-sent ticket snapshot resolves to the newest state. A renewal reported by Salesforce and Stripe becomes one outcome.
+- **Schema drift.** Each version is mapped to one shape, and an unreadable payload is rejected with a reason.
+- **Thin accounts** are not green.
+- **NULL is not zero.** An unconnected source is NULL and named as such on screen.
+- **Time** is UTC everywhere, and no code reads the clock except the scheduler.
+- **Email addresses** are HMAC-hashed per tenant at load, with the domain kept in clear.
+
+**Host and cost.** One GCP e2-small VM in Mumbai runs the same Docker Compose stack as a laptop, behind Caddy for HTTPS. It costs about $21 a month ([docs/decisions/0002-host-on-gcp-vm.md](docs/decisions/0002-host-on-gcp-vm.md)). The worker has been running unattended since 2026-10-17, and `/health` shows the last night with `trigger: schedule`.
 
 ## What I deliberately skipped
 
-To be written in Step 7. The starting list is [docs/PLAN.md](docs/PLAN.md) section 10.
+- **Real connectors.** The generator writes exactly the raw-event shape a connector would.
+- **Sending any email.** The job produces a task and a briefing, and outreach stays with the CSM in their own client.
+- **LLM narration of the briefing.** It was first in the cut order. The briefing is the model's reason list in a template, so it cannot claim anything the model did not compute.
+- **Real login.** One shared password and a tenant and CSM switcher stand in. A real login changes who sets the session, not how the database enforces it.
+- **Task workflow beyond one escalation level:** SLA configuration, digests and a CS-lead view.
+- **Retraining automation and drift monitoring** (PSI, null-rate alerts). The data-quality gate is the only automatic guard.
+- **Identity beyond keys and domains:** fuzzy name matching, match confidence, renamed companies, parent and subsidiary, and CRM duplicates and merges.
+- **Per-tenant calibration and per-tenant policy settings.** Per-tenant metrics are reported in the evaluation slices, not corrected.
+- **CSM reassignment history.** `owner_changed` is not generated, so ownership is the current owner.
+- **The `reopened_90d` and `owner_changed_180d` features.** The generator emits neither event.
+- **Contract shapes:** monthly terms, auto-renew flags, seat tiers, multiple currencies and seasonality.
+- **Composite tenant foreign keys.** RLS and the isolation tests cover the leak that matters.
+- **Second worker replica, advisory locks and automatic backfill** of missed nights. Recovery is `nightly --as-of <night>`.
+- **Daily feature tables over history.** Features are recomputable for any `as_of` through `build_features`.
 
 ## What breaks first at 10x
 
-To be written in Step 7, from measured stage timings. The hypothesis it will confirm or contradict is [docs/PLAN.md](docs/PLAN.md) section 11.
+Measured from the live nights and a local profile of the feature build ([docs/decisions/step-7-10x.md](docs/decisions/step-7-10x.md)). Today a night takes 21 s for all five tenants. For t1 (2,000 accounts, 84,000 events) it is 9.5 s: 2.7 s ingest, 4.4 s snapshot, 2.0 s score and 0.3 s gate. The snapshot scales at about 0.05 ms per event, and scoring at about 1 ms per account.
+
+- **10x events (2M):** the nightly run stays fine, at about 4 minutes. **The first thing to break is the bootstrap's weekly anchor build.** It re-reads every event for every Monday (about 0.4 s plus 7 µs per event, 157 Mondays), so t1 alone would take about 40 minutes on the VM, and its events frame would peak near 1 GB. On a 2 GB host that also runs Postgres, it runs out of memory before it runs out of time.
+- **10x accounts (50,000):** scoring stays fast, but storage binds. Snapshots grow to about 4.5 GB, and scores to about 3 GB a month with full contribution vectors, which fills a 20 GB disk within weeks. Training then has to read 3.2M JSON feature rows at once.
+- **10x tenants (50):** the sequential per-tenant night is about 3.5 minutes and still isolates failures. The bootstrap grows to hours, and training memory binds as above.
+- **LLM calls** would scale with tasks (at most k per CSM a night), not accounts, so they are not a first failure.
+
+This confirms the plan's hypothesis, that the pandas feature pass breaks first at bootstrap on the small host, and sharpens it: memory goes before time. The named fix is incremental anchors from per-account running aggregates, which turns O(weeks × events) into O(events). Then come retention, top-10-plus-residual contributions, and a queue with per-tenant advisory locks. Until then, an 8 GB VM is the cheap stopgap at about $35 a month more.
+
+## How we know it works
+
+- **The evaluation below.** It runs on a cycle-based temporal holdout, with five methods compared on one slice, recall@8 per CSM-week, lead time before the notice deadline, slices, and leakage probes.
+- **231 tests** (`uv run --env-file .env pytest`). They include:
+  - point in time: a late event leaves the old snapshot unchanged;
+  - tenant isolation on every table, with no context meaning zero rows;
+  - crash part-way, then rerun: one clean night and no duplicate tasks;
+  - no flapping: identical scores give zero tasks, and an oscillating score gives at most one task per three nights;
+  - escalation fires once;
+  - one test per duplicate kind;
+  - drift normalises;
+  - the gate blocks and publishes nothing;
+  - byte-identical regeneration;
+  - truth never reaches the pipeline;
+  - every page renders, and another tenant's ids answer 404.
+- **Unattended `job_runs` rows** from nights nobody triggered, on the run history page.
+- **On every score page,** the reconciliation `expected value + sum of contributions = margin`, and `python -m app rescore <score_id>` from a terminal.
+
+**Licences.** The code is MIT ([LICENSE](LICENSE)). Every dependency is permissively licensed (MIT, BSD, Apache-2.0 or 0BSD) except psycopg, which is LGPL-3.0 and used unmodified as a library, as the LGPL allows. All data is synthetic, and every email address uses the reserved `.example` and `.test` domains.
 
 ## Local development
 
