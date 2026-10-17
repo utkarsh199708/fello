@@ -51,7 +51,7 @@ Screenshots are from a local run on the same synthetic data, a week after launch
   - What was sent, which model, the prompt version and the outcome are stored per briefing, and the summary is labelled as model-written on the page.
   - It is off on the live site until an API key is set in the VM's `.env`; until then the briefing is the template alone. Tests cover it with a fake client.
 
-**How it is built.** Python 3.11, FastAPI with Jinja2 and vendored htmx, Postgres 16, SQLAlchemy Core and Alembic, LightGBM, and an APScheduler worker. It is one image, run as a web process and a worker process.
+**How it is built.** The interface follows Penpot's open-source design system: its dark theme with a light toggle, its colour tokens, spacing, radii and the Work Sans typeface. Python 3.11, FastAPI with Jinja2 and vendored htmx, Postgres 16, SQLAlchemy Core and Alembic, LightGBM, and an APScheduler worker. It is one image, run as a web process and a worker process.
 
 - **Multi-tenancy is enforced in the database.** Every tenant table has `FORCE ROW LEVEL SECURITY`, with one policy on the session setting `app.tenant_id`. Only `tenant_tx` sets it, for one transaction. With no organisation set, a query sees zero rows. Every page takes the organisation from a signed, SameSite=Strict session cookie. Only the switcher reads an organisation id from the request (to list its CSMs and set the cookie), and the admin trigger takes one in its JSON body. Another organisation's id answers 404.
 - **Point in time.** A feature at `as_of` sees only events received by `as_of`, with windows on when they happened. A late event therefore changes tonight's snapshot, never last week's. Training anchors follow the same rule, so a late event never changes a past training row either. The runtime roles have no UPDATE or DELETE on snapshots and scores; only a migration, as the table owner, can change them.
@@ -138,7 +138,7 @@ This confirms the plan's hypothesis, that the pandas feature pass breaks first a
 - **Unattended `job_runs` rows** from nights nobody triggered, on the run history page.
 - **On every score page,** the reconciliation `expected value + sum of contributions = margin`, and `python -m app rescore <score_id>` from a terminal.
 
-**Licences.** The code is MIT ([LICENSE](LICENSE)). Every runtime dependency is permissively licensed (MIT, BSD, Apache-2.0, PSF-2.0 or 0BSD, plus Zlib and CC0 parts inside numpy), except psycopg and psycopg-binary. Those are LGPL-3.0 and used unmodified as libraries, as the LGPL allows. certifi (MPL-2.0) comes in only with the test client. All data is synthetic, and every email address uses the reserved `.example` and `.test` domains.
+**Licences.** The code is MIT ([LICENSE](LICENSE)). The vendored Work Sans fonts are under the SIL Open Font License 1.1, with its text in `static/fonts/OFL.txt`. Every runtime dependency is permissively licensed (MIT, BSD, Apache-2.0, PSF-2.0 or 0BSD, plus Zlib and CC0 parts inside numpy), except psycopg and psycopg-binary. Those are LGPL-3.0 and used unmodified as libraries, as the LGPL allows. certifi (MPL-2.0) comes in only with the test client. All data is synthetic, and every email address uses the reserved `.example` and `.test` domains.
 
 ## Local development
 
@@ -359,6 +359,9 @@ Leakage probes:
 | File | Upstream | Version | Licence | SHA-256 |
 |---|---|---|---|---|
 | `static/htmx.min.js` | npm package `htmx.org`, file `dist/htmx.min.js` | 2.0.11 | 0BSD | `d6fdc75f204e6bdefa99b69bf1e6d4ac69b8a364f77929f45c13476b4000f717` |
+| `static/fonts/WorkSans-Regular.woff2` | Work Sans, as shipped in Penpot's `frontend/resources/fonts` | 2.010 | SIL OFL 1.1 ([static/fonts/OFL.txt](static/fonts/OFL.txt)) | `ec25aa373e738b1ad6169d98558f9e3404099698162d0115f8ec93d5f1cd81e2` |
+| `static/fonts/WorkSans-Medium.woff2` | as above | 2.010 | SIL OFL 1.1 | `358764933509f90ae8911088a6d4353c3227beef22d94fd66f7818ed8d7b6081` |
+| `static/fonts/WorkSans-SemiBold.woff2` | as above | 2.010 | SIL OFL 1.1 | `99b5a2e4fdfa19daec110eacd85786b6d8954380c3688b6285030cdcdf50e0e6` |
 
 The npm tarball was checked against the registry's sha512 integrity before extraction, and the file matches the jsDelivr copy of the same release. Git stores it as binary so its bytes never change. Check it with `sha256sum static/htmx.min.js`.
 

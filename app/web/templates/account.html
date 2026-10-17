@@ -26,7 +26,7 @@
     <h2 style="margin-top: 0">Score history</h2>
     {% if spark %}
     <svg viewBox="0 0 320 64" width="100%" height="64" preserveAspectRatio="none" role="img" aria-label="Probability over the scored nights">
-      <polyline points="{{ spark }}" fill="none" stroke="#dc2626" stroke-width="2" vector-effect="non-scaling-stroke"/>
+      <polyline points="{{ spark }}" fill="none" stroke-width="2" vector-effect="non-scaling-stroke"/>
     </svg>
     <p class="muted small">Probability over the last {{ scores | length }} scored nights, oldest on the left.</p>
     {% endif %}
