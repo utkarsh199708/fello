@@ -10,8 +10,8 @@ Task 7.7. Owner: Utkarsh. This file holds no secrets.
 4. **The live site answers:** `https://136-83-131-193.sslip.io/health` returns `"status":"ok"` with the latest night.
 5. **Read the shared password on the VM**, without printing it anywhere else:
 
-   ```bash
-   gcloud.cmd compute ssh monday-list --zone asia-south1-a --project fello-monday-list --command "sudo grep '^BASIC_AUTH_PASSWORD=' /opt/monday-list/.env"
+   ```powershell
+   & "$env:LOCALAPPDATA\Google\Cloud SDK\google-cloud-sdkin\gcloud.cmd" compute ssh monday-list --zone asia-south1-a --project fello-monday-list --command "sudo grep '^BASIC_AUTH_PASSWORD=' /opt/monday-list/.env"
    ```
 
    Send it in a separate message from the links.
@@ -38,8 +38,8 @@ Task 7.7. Owner: Utkarsh. This file holds no secrets.
 
 The VM bills about $21 a month. Once the review is over, stop it (or delete the project) from a terminal:
 
-```bash
-gcloud.cmd compute instances stop monday-list --zone asia-south1-a --project fello-monday-list
+```powershell
+& "$env:LOCALAPPDATA\Google\Cloud SDK\google-cloud-sdkin\gcloud.cmd" compute instances stop monday-list --zone asia-south1-a --project fello-monday-list
 ```
 
-Stopping keeps the disk and the static IP, which cost about $2 to $4 a month. Deleting the project stops everything.
+This runs in PowerShell; `gcloud.cmd` is not on the PATH, so the full path is used. Stopping keeps the disk and the static IP, which still cost about $8 to $10 a month (an idle static IP is billed at a higher rate). Deleting the project stops all charges, and all data.
