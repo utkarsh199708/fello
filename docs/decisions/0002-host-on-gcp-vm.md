@@ -71,3 +71,7 @@ Commit `dd1188d` was deployed at 07:32 UTC, with the volumes kept and no migrati
 ## Affects
 
 TASKS.md items 1.15, 2.15 and 7.1 now mean "redeploy to the VM" rather than Railway. D2 (spend) is approved at about $21 a month, and D3 (project and Postgres) is done.
+
+## Review-fixes redeploy, 2026-10-17 (UTC)
+
+Commit `4d10c56` was deployed at 10:02 UTC, with the volumes kept. The worker ran migration 0005 (the `narrations` table, with forced row-level security), found the bootstrap night already succeeded, and armed the 02:00 UTC schedule. The unattended night of 2026-10-17 is still recorded with `trigger: schedule`. The new dashboard is live. The LLM summary stays off: the VM's `.env` has no `LLM_API_KEY`.
