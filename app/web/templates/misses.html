@@ -1,11 +1,18 @@
 {% extends "base.html" %}
-{% block title %}Worst misses - Renewal risk{% endblock %}
+{% block title %}Worst misses - Monday list{% endblock %}
 {% block body %}
-<h1>Worst misses</h1>
-<p>Renewals that were lost although the system was scoring the account in the 90 days before, and never put it in its CSM's top 8. Largest ARR first. Each one is a question for the model: what did it not see? The offline evaluation (<code>python -m app evaluate</code>) lists misses across the whole holdout year.</p>
+<div class="head">
+  <div>
+    <h1>Worst misses</h1>
+    <p class="sub">Lost renewals the system was scoring in the 90 days before, but never put in their CSM's top 8. Largest ARR first.</p>
+  </div>
+</div>
+<p class="note">Each one is a question for the model: what did it not see? Open the account to read its timeline. The offline evaluation (<code>python -m app evaluate</code>) lists misses across the whole holdout year, and the README reports them.</p>
+<div class="card table">
 <table>
   <thead><tr><th>Account</th><th>Renewal</th><th class="n">ARR</th><th class="n">Best rank</th><th class="n">Nights scored</th></tr></thead>
-  <tbody>{% for m in misses %}<tr><td><a href="/accounts/{{ m.account_id }}">{{ m.account }}</a></td><td>{{ m.renewal_date }}</td><td class="n">{{ m.arr | money }}</td><td class="n">{{ m.best_rank if m.best_rank is not none else "not enough signal" }}</td><td class="n">{{ m.nights_scored }}</td></tr>
+  <tbody>{% for m in misses %}<tr><td><a class="acct" href="/accounts/{{ m.account_id }}">{{ m.account }}</a></td><td>{{ m.renewal_date }}</td><td class="n">${{ m.arr | money }}</td><td class="n">{{ m.best_rank if m.best_rank is not none else "not enough signal" }}</td><td class="n">{{ m.nights_scored }}</td></tr>
   {% else %}<tr><td colspan="5" class="muted">No lost renewal was missed in the nights scored so far.</td></tr>{% endfor %}</tbody>
 </table>
+</div>
 {% endblock %}

@@ -1,36 +1,58 @@
 {% extends "base.html" %}
-{% block title %}Monday list - Renewal risk{% endblock %}
+{% block title %}Monday list{% endblock %}
 {% block body %}
-<h1>Monday list</h1>
-<p>{{ tenant }}, {{ csm.name }}.
-{% if as_of %}Scores as of {{ as_of | ts }}.{% else %}<span class="muted">No scores yet.</span>{% endif %}</p>
-<p class="muted">Sort by:
-{% for s in sorts %}{% if s == sort %}<strong>{{ s | replace("_", " ") }}</strong>{% else %}<a href="/list?sort={{ s }}">{{ s | replace("_", " ") }}</a>{% endif %}{% if not loop.last %} · {% endif %}{% endfor %}.
-Escalated tasks always come first. Markers compare with the week's first night.</p>
+{% set sort_names = {"rank_score": "ARR at risk", "probability": "Probability", "arr": "ARR", "days_to_renewal": "Renewal date"} %}
+{% set marker_tags = {"new": ("new", "New this week"), "moved up": ("up", "Moved up"), "moved down": ("down", "Moved down")} %}
+<div class="head">
+  <div>
+    <h1>Monday list</h1>
+    <p class="sub">{{ tenant }} · {{ csm.name }}'s book of {{ summary.book }} accounts.
+    {% if not as_of %}<span class="muted">No scores yet.</span>{% endif %}</p>
+  </div>
+  <div class="seg" aria-label="Sort by">
+    {% for s in sorts %}{% if s == sort %}<strong>{{ sort_names.get(s, s) }}</strong>{% else %}<a href="/list?sort={{ s }}">{{ sort_names.get(s, s) }}</a>{% endif %}{% endfor %}
+  </div>
+</div>
+
+<section class="stats">
+  <div class="card stat"><div class="k">Work this week</div><div class="v">{{ summary.red }}</div><div class="s">red: your top {{ summary.k }} by ARR at risk</div></div>
+  <div class="card stat"><div class="k">Expected ARR at risk</div><div class="v">${{ summary.red_at_risk | money }}</div><div class="s">across those {{ summary.red }} accounts</div></div>
+  <div class="card stat {{ 'hot' if summary.escalated else '' }}"><div class="k">Open tasks</div><div class="v">{{ summary.tasks }}</div><div class="s">{{ summary.escalated }} escalated, untouched 5 business days near renewal</div></div>
+  <div class="card stat"><div class="k">Renewing in 60 days</div><div class="v">{{ summary.renewing_60 }}</div><div class="s">in this book</div></div>
+</section>
+
+<div class="card table">
 <table>
-  <thead><tr><th class="n">Rank</th><th>Colour</th><th>Account</th><th class="n">Probability</th><th class="n">ARR</th><th class="n">Days to renewal</th><th class="n">Rank score</th><th>Since Monday</th><th>Task</th></tr></thead>
+  <thead><tr><th class="n">#</th><th>Risk</th><th>Account</th><th class="n">Probability</th><th class="n">ARR</th><th class="n">Renews in</th><th class="n">Rank score</th><th>Top reasons</th><th>Task</th></tr></thead>
   <tbody>
   {% for r in rows %}
-    <tr>
-      <td class="n">{{ r.rank_in_book if r.rank_in_book is not none else "" }}</td>
-      <td><span class="dot {{ r.colour }}"></span>{{ r.colour }}</td>
-      <td><a href="/accounts/{{ r.account_id }}">{{ r.account }}</a></td>
-      <td class="n"><a href="/scores/{{ r.score_id }}">{{ r.probability | pct }}</a></td>
-      <td class="n">{{ r.arr | money }}</td>
-      <td class="n">{{ r.days_to_renewal if r.days_to_renewal is not none else "" }}</td>
-      <td class="n">{{ r.rank_score | money }}</td>
-      <td>{{ r.marker }}</td>
+    <tr class="{{ 'is-red' if r.colour == 'red' else '' }} {{ 'is-escalated' if r.task_status == 'escalated' else '' }}">
+      <td class="n muted">{{ r.rank_in_book if r.rank_in_book is not none else "" }}</td>
+      <td><span class="pill {{ r.colour }}">{{ r.colour }}</span></td>
+      <td class="acct-cell"><a class="acct" href="/accounts/{{ r.account_id }}">{{ r.account }}</a>
+        {% if r.marker in marker_tags %}<div><span class="tag {{ marker_tags[r.marker][0] }}">{{ marker_tags[r.marker][1] }}</span></div>{% endif %}</td>
+      <td class="n"><span class="prob"><span class="bar"><i style="width: {{ ((r.probability or 0) / summary.max_probability * 100) | round(1) }}%"></i></span><a href="/scores/{{ r.score_id }}" title="Why this score">{{ r.probability | pct }}</a></span></td>
+      <td class="n">${{ r.arr | money }}</td>
+      <td class="n {{ 'soon' if r.days_to_renewal is not none and r.days_to_renewal <= 60 else '' }}">{{ r.days_to_renewal ~ " days" if r.days_to_renewal is not none else "" }}</td>
+      <td class="n strong">${{ r.rank_score | money }}</td>
+      <td><div class="chips">{% for c in r.reasons %}<span class="chip {{ 'na' if c.missing else '' }}" title="{{ c.title }}">{{ c.label }} <b>{{ c.shown }}</b></span>{% else %}<span class="muted small" title="Its rank is probability × ARR; the score page shows every factor.">No single strong signal</span>{% endfor %}</div></td>
       <td>
         {% if r.task_id %}
-          <span class="badge {{ r.task_status }}">{{ r.task_status }}</span>
-          <span class="muted">{{ r.rule_fired }}, {{ r.task_age }} business days</span>
-          {% if r.briefing %}<details><summary>Why</summary><div class="muted">{{ r.briefing }}</div></details>{% endif %}
-          {% if r.task_status != "snoozed" %}
-          <form class="inline" method="post" action="/tasks/{{ r.task_id }}/status"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="status" value="done"><button>Done</button></form>
-          <form class="inline" method="post" action="/tasks/{{ r.task_id }}/status"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="status" value="snoozed"><button>Snooze a week</button></form>
-          {% endif %}
-          <form class="inline" method="post" action="/tasks/{{ r.task_id }}/status"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="status" value="dismissed"><input type="text" name="reason" placeholder="why dismiss?" required maxlength="200"><button>Dismiss</button></form>
-        {% endif %}
+        <div class="task">
+          <div><span class="badge {{ r.task_status }}">{{ r.task_status }}</span>
+            <span class="muted small">{{ r.rule_fired | replace("_", " ") }}, {{ r.task_age }} business days old</span></div>
+          {% if r.briefing %}<details class="why"><summary>Read the briefing</summary>{% if r.narration %}<div class="narration">{{ r.narration }}<span class="small muted"> Written by {{ r.narration_model }} from the reasons below; every number checked against them.</span></div>{% endif %}<div>{{ r.briefing }}</div></details>{% endif %}
+          <div class="task-actions">
+            {% if r.task_status != "snoozed" %}
+            <form class="inline" method="post" action="/tasks/{{ r.task_id }}/status"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="status" value="done"><button class="primary">Done</button></form>
+            <form class="inline" method="post" action="/tasks/{{ r.task_id }}/status"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="status" value="snoozed"><button>Snooze a week</button></form>
+            {% endif %}
+            <details class="dismiss"><summary>Dismiss</summary>
+              <form method="post" action="/tasks/{{ r.task_id }}/status"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="status" value="dismissed"><input type="text" name="reason" placeholder="Why? e.g. renewal signed" required maxlength="200" aria-label="Reason for dismissing"><button>Dismiss</button></form>
+            </details>
+          </div>
+        </div>
+        {% else %}<span class="muted small">No task</span>{% endif %}
       </td>
     </tr>
   {% else %}
@@ -38,24 +60,28 @@ Escalated tasks always come first. Markers compare with the week's first night.<
   {% endfor %}
   </tbody>
 </table>
-<p class="muted">Rank score is probability x ARR, the expected ARR at risk. Click a probability to see why.</p>
+</div>
+<p class="note">Rank score is probability × ARR: the expected ARR at risk at the next renewal. Red is the top {{ summary.k }} of this book by rank score, yellow the next 16, green the rest. Escalated tasks always come first. "New this week" and the moves compare with the week's first night. Click a probability to see every factor behind it, down to the raw events.</p>
 
 <h2>Not enough signal ({{ thin | length }})</h2>
-<p class="muted">Accounts younger than 30 days or with fewer than 5 events. They are scored but not ranked, and never shown as green.</p>
+<p class="note">Accounts younger than 30 days or with fewer than 5 events. They are scored but not ranked, and never shown as green.</p>
+<div class="card table">
 <table>
-  <thead><tr><th>Account</th><th class="n">Events on record</th><th class="n">Probability</th><th class="n">ARR</th><th class="n">Days to renewal</th></tr></thead>
+  <thead><tr><th>Account</th><th class="n">Events on record</th><th class="n">Probability</th><th class="n">ARR</th><th class="n">Renews in</th></tr></thead>
   <tbody>
   {% for r in thin %}
-    <tr><td><a href="/accounts/{{ r.account_id }}">{{ r.account }}</a></td><td class="n">{{ r.event_count }}</td><td class="n"><a href="/scores/{{ r.score_id }}">{{ r.probability | pct }}</a></td><td class="n">{{ r.arr | money }}</td><td class="n">{{ r.days_to_renewal }}</td></tr>
+    <tr><td><a class="acct" href="/accounts/{{ r.account_id }}">{{ r.account }}</a> <span class="pill grey">not enough signal</span></td><td class="n">{{ r.event_count }}</td><td class="n"><a href="/scores/{{ r.score_id }}">{{ r.probability | pct }}</a></td><td class="n">${{ r.arr | money }}</td><td class="n">{{ r.days_to_renewal ~ " days" if r.days_to_renewal is not none else "" }}</td></tr>
   {% else %}
     <tr><td colspan="5" class="muted">None.</td></tr>
   {% endfor %}
   </tbody>
 </table>
+</div>
 
 {% set qr = {"unknown_native_key": "key not in the crosswalk", "unknown_domain": "email domain matches no account", "ambiguous_domain": "email domain shared by several accounts", "no_identity": "no key and no email"} %}
 {% set rr = {"duplicate_event_id": "delivered twice", "unknown_event_type": "unknown event type", "unknown_schema_version": "unknown payload version", "unparseable_payload": "unreadable payload"} %}
-<p class="muted" id="data-quality">Across this organisation, {{ "{:,}".format(quality.matched) }} events reached the scores.
+<h2>Data behind these scores</h2>
+<p class="card pad note" id="data-quality">Across this organisation, {{ "{:,}".format(quality.matched) }} events reached the scores.
 {{ "{:,}".format(quality.quarantined_total) }} could not be matched to an account and are held in <a href="/quarantine">quarantine</a>{% if quality.quarantined %} ({% for reason, n in quality.quarantined.items() %}{{ "{:,}".format(n) }} {{ qr.get(reason, reason) }}{% if not loop.last %}; {% endif %}{% endfor %}){% endif %}.
 {{ "{:,}".format(quality.rejected_total) }} were set aside{% if quality.rejected %} ({% for reason, n in quality.rejected.items() %}{{ "{:,}".format(n) }} {{ rr.get(reason, reason) }}{% if not loop.last %}; {% endif %}{% endfor %}){% endif %}.
 Scores never see either.</p>

@@ -20,7 +20,8 @@ import sqlalchemy as sa
 
 from app.db import get_engine, tenant_tx
 from app.ingest.resolve import resolve
-from app.jobs.nightly import run_nightly
+from app.jobs.narrate import narrate_run
+from app.jobs.nightly import run_id_for, run_nightly
 from tests.helpers import purge_tenants, seed_tiny
 
 NIGHT = datetime(2026, 10, 13, 2, 0, tzinfo=UTC)
@@ -45,6 +46,8 @@ def seeded(database_url, tmp_path_factory):
     run_nightly(NIGHT)  # fills job_runs, and scores that carry a run_id
     for tid in ids:
         insert_task(tid)
+        # A fake LLM client, so the narrations table has rows for both tenants too.
+        narrate_run(tid, run_id_for(tid, NIGHT.date()), client=lambda facts: "Check usage.")
     yield ids
     purge_tenants(database_url, ids)
 

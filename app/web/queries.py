@@ -103,18 +103,21 @@ def ranked_list(
         SELECT s.score_id, s.account_id, a.name AS account, s.rank_in_book, s.probability,
                s.arr, s.days_to_renewal, s.rank_score, s.colour, s.evidence_state, s.k,
                (s.coverage->>'total_event_count')::int AS event_count,
+               s.contributions, n.features AS feature_values,
                t.task_id, t.status AS task_status, t.run_date AS task_run_date,
-               t.rule_fired, b.text AS briefing,
+               t.rule_fired, b.text AS briefing, nr.text AS narration, nr.model AS narration_model,
                m.rank_in_book AS monday_rank, m.score_id IS NOT NULL AS seen_monday,
                (SELECT as_of FROM monday) AS monday_as_of
         FROM scores s
         JOIN accounts a USING (account_id)
+        JOIN snapshots n ON n.snapshot_id = s.snapshot_id
         LEFT JOIN LATERAL (
             SELECT task_id, status, run_date, rule_fired, briefing_id FROM tasks
             WHERE tasks.account_id = s.account_id AND status IN ('open', 'snoozed', 'escalated')
             ORDER BY run_date DESC LIMIT 1
         ) t ON true
         LEFT JOIN briefings b ON b.briefing_id = t.briefing_id
+        LEFT JOIN narrations nr ON nr.briefing_id = b.briefing_id AND nr.status = 'ok'
         LEFT JOIN scores m ON m.account_id = s.account_id AND m.model_version = s.model_version
              AND m.as_of = (SELECT as_of FROM monday)
         WHERE {owner} AND s.as_of = :d
@@ -152,7 +155,11 @@ def get_score(conn: Connection, score_id: uuid.UUID) -> dict[str, Any] | None:
                 WHERE e.account_id = s.account_id AND e.occurred_at <= s.as_of
                   AND (n.ingest_watermark IS NULL OR e.received_at > n.ingest_watermark))
                    AS arrived_after,
-               (SELECT text FROM briefings b WHERE b.score_id = s.score_id) AS briefing
+               (SELECT text FROM briefings b WHERE b.score_id = s.score_id) AS briefing,
+               (SELECT nr.text FROM briefings b JOIN narrations nr USING (briefing_id)
+                WHERE b.score_id = s.score_id AND nr.status = 'ok') AS narration,
+               (SELECT nr.model FROM briefings b JOIN narrations nr USING (briefing_id)
+                WHERE b.score_id = s.score_id AND nr.status = 'ok') AS narration_model
         FROM scores s
         JOIN accounts a USING (account_id)
         JOIN snapshots n ON n.snapshot_id = s.snapshot_id

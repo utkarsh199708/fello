@@ -1,10 +1,11 @@
-<h2>Raw events behind {{ feature }}</h2>
+<h2 style="margin-top: 0">Raw events behind {{ feature }}</h2>
 {% if not from_events %}
 <p class="muted">This feature comes from the account, contract or tenant row, not from events.</p>
 {% elif not events %}
 <p class="muted">No events in the window.</p>
 {% else %}
-<p class="muted">{{ total }} event{{ "" if total == 1 else "s" }}{% if total > limit %}, newest {{ limit }} shown{% endif %}.</p>
+<p class="muted">{{ total }} event{{ "" if total == 1 else "s" }}{% if total > limit %}, newest {{ limit }} shown{% endif %}. Each one is the stored raw payload, with how it was matched to this account.</p>
+<div class="table">
 <table>
   <thead><tr><th>Occurred</th><th>Received</th><th>Source</th><th>Type</th><th>Matched by</th><th>Payload</th></tr></thead>
   <tbody>
@@ -17,4 +18,5 @@
   {% endfor %}
   </tbody>
 </table>
+</div>
 {% endif %}

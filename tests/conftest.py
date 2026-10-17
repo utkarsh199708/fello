@@ -66,6 +66,8 @@ def database_url() -> str:
         maintenance.dispose()
 
     os.environ["DATABASE_URL"] = url.render_as_string(hide_password=False)
+    # Never call a real LLM from a test, whatever .env holds; narration tests pass a fake client.
+    os.environ["LLM_API_KEY"] = ""
     for key, value in DEV_PASSWORDS.items():
         os.environ.setdefault(key, value)
     migrate()  # creates the database again, then the roles and the schema

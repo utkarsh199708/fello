@@ -31,7 +31,15 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.db import get_engine, tenant_tx
-from app.ml.feature_spec import FEATURE_EVENTS, FEATURE_SOURCE, FEATURES
+from app.ml.feature_spec import (
+    FEATURE_EVENTS,
+    FEATURE_LABELS,
+    FEATURE_SOURCE,
+    FEATURES,
+    PERCENT_FEATURES,
+    REASON_FEATURES,
+    SHORT_LABELS,
+)
 from app.web import queries as q
 from app.web.auth import make_basic_auth, required_password
 
@@ -70,6 +78,95 @@ def missing_reason(feature: str, values: dict[str, Any]) -> str | None:
 
 def _fmt_ts(value: Any) -> str:
     return "" if value is None else value.strftime("%Y-%m-%d %H:%M UTC")
+
+
+def _short_value(feature: str, value: Any) -> str:
+    """A reason's value as a chip shows it: percentages as such, flags as yes or no."""
+    if feature in PERCENT_FEATURES:
+        sign = "+" if feature.startswith("usage_change") else ""
+        return f"{float(value) * 100:{sign}.0f}%"
+    if feature in FLAG_FEATURES:
+        return "yes" if value else "no"
+    if isinstance(value, float) and not value.is_integer():
+        return f"{value:,.1f}"
+    return f"{float(value):,.0f}"
+
+
+# A chip must move the log-odds by at least this much. On the live model the signals a CSM can act
+# on (open tickets, seats in use, active users, days since the customer wrote) push red accounts by
+# 0.03 to 1.4, while the rest stay under 0.02. Smaller pushes are real but too small to be a reason
+# to call; they stay visible on the score page, with every other contribution.
+CHIP_MIN_CONTRIBUTION = 0.025
+FLAG_FEATURES = frozenset({"unrecovered_failure_90d", "prior_contraction"})
+
+
+def reason_chips(
+    contributions: dict[str, float], values: dict[str, Any], n: int = 3
+) -> list[dict[str, Any]]:
+    """The ``n`` actionable features pushing this score up most, for the chips on the list.
+
+    The same rule as the nightly briefing (``app.jobs.actions.reasons_of``): positive
+    contributions among ``REASON_FEATURES``, largest first. Two display rules on top: a chip needs
+    ``CHIP_MIN_CONTRIBUTION``, and a yes/no flag is a reason only when it is set. A NULL value says
+    why it is NULL.
+    """
+    values = values or {}
+    up = sorted(
+        (
+            (f, c)
+            for f, c in (contributions or {}).items()
+            if c >= CHIP_MIN_CONTRIBUTION
+            and f in REASON_FEATURES
+            and not (f in FLAG_FEATURES and not values.get(f))
+        ),
+        key=lambda fc: -fc[1],
+    )
+    chips = []
+    for feature, _ in up[:n]:
+        missing = missing_reason(feature, values)
+        chips.append(
+            {
+                "label": SHORT_LABELS.get(feature, feature),
+                "shown": missing or _short_value(feature, values[feature]),
+                "title": FEATURE_LABELS.get(feature, feature),
+                "missing": missing is not None,
+            }
+        )
+    return chips
+
+
+def book_summary(rows: list[dict[str, Any]], thin: list[dict[str, Any]]) -> dict[str, Any]:
+    """The cards above the list: this week's work and the money behind it."""
+    red = [r for r in rows if r["colour"] == "red"]
+    book = rows + thin
+    return {
+        "book": len(rows) + len(thin),
+        "max_probability": max((float(r["probability"] or 0) for r in rows), default=0.0) or 1.0,
+        "red": len(red),
+        "k": rows[0]["k"] if rows else 8,
+        "red_at_risk": sum(float(r["rank_score"] or 0) for r in red),
+        "book_at_risk": sum(float(r["rank_score"] or 0) for r in rows),
+        "tasks": sum(1 for r in book if r["task_id"] is not None),
+        "escalated": sum(1 for r in book if r["task_status"] == "escalated"),
+        "renewing_60": sum(
+            1 for r in book if r["days_to_renewal"] is not None and r["days_to_renewal"] <= 60
+        ),
+        "thin": len(thin),
+    }
+
+
+def sparkline(scores: list[dict[str, Any]], width: int = 320, height: int = 64) -> str | None:
+    """SVG polyline points for an account's probability over its scored nights, oldest first."""
+    values = [float(s["probability"]) for s in reversed(scores) if s["probability"] is not None]
+    if len(values) < 2:
+        return None
+    lo, hi = min(values), max(values)
+    step = width / (len(values) - 1)
+
+    def y(v: float) -> float:  # a flat history is drawn across the middle
+        return height / 2 if hi - lo < 1e-9 else height - 6 - (v - lo) / (hi - lo) * (height - 12)
+
+    return " ".join(f"{i * step:.1f},{y(v):.1f}" for i, v in enumerate(values))
 
 
 def now() -> datetime:
@@ -114,7 +211,7 @@ def create_app() -> FastAPI:
     if not secret:
         raise RuntimeError("SESSION_SECRET is not set")
 
-    app = FastAPI(title="Renewal risk", docs_url=None, redoc_url=None, openapi_url=None)
+    app = FastAPI(title="Monday list", docs_url=None, redoc_url=None, openapi_url=None)
     # Added first, so it runs inside the session middleware (order is last-added = outermost).
     app.middleware("http")(make_basic_auth(password))
     app.add_middleware(
@@ -234,6 +331,7 @@ def create_app() -> FastAPI:
         today = now().date()
         for r in rows:
             r["marker"] = q.marker(r)
+            r["reasons"] = reason_chips(r["contributions"], r["feature_values"])
             if r["task_run_date"] is not None:
                 r["task_age"] = business_days(r["task_run_date"], today)
         ranked_rows = [r for r in rows if r["evidence_state"] != "insufficient"]
@@ -247,6 +345,7 @@ def create_app() -> FastAPI:
                 "as_of": as_of,
                 "rows": ranked_rows,
                 "thin": thin,
+                "summary": book_summary(ranked_rows, thin),
                 "quality": quality,
                 "sort": sort,
                 "sorts": list(q.SORTS),
@@ -292,15 +391,22 @@ def create_app() -> FastAPI:
         rows = [
             {
                 "name": f,
+                "label": FEATURE_LABELS.get(f, f.replace("_", " ")),
                 "value": values.get(f),
                 "missing": missing_reason(f, values),
                 "contribution": contributions.get(f, 0.0),
                 "has_events": FEATURE_EVENTS[f] is not None,
+                "actionable": f in REASON_FEATURES,
             }
             for f in FEATURES
         ]
         total = score["expected_value"] + sum(r["contribution"] for r in rows)
         reconciles = abs(total - score["margin"]) < 1e-6
+        # Largest push towards risk first, then what lowers it; the bar is relative to the largest.
+        rows.sort(key=lambda r: -r["contribution"])
+        widest = max((abs(r["contribution"]) for r in rows), default=0.0) or 1.0
+        for r in rows:
+            r["width"] = round(abs(r["contribution"]) / widest * 100, 1)
         return page(
             request,
             "score.html",
@@ -355,6 +461,7 @@ def create_app() -> FastAPI:
                 "timeline": timeline,
                 "tasks": tasks,
                 "as_of": latest,
+                "spark": sparkline(scores),
             },
             ids[0],
         )

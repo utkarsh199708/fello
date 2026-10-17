@@ -1,35 +1,64 @@
 {% extends "base.html" %}
-{% block title %}Score - Renewal risk{% endblock %}
+{% block title %}{{ score.account }}: why this score - Monday list{% endblock %}
 {% block body %}
-<h1>{{ score.account }}</h1>
-<p><a href="/accounts/{{ score.account_id }}">Account timeline</a></p>
-<p>Probability <strong>{{ score.probability | pct }}</strong>, rank {{ score.rank_in_book }},
-   model <code>{{ score.model_version }}</code>, as of {{ score.as_of | ts }}.
-   Events counted were received by {{ score.ingest_watermark | ts }}.</p>
-<p>Colour <span class="dot {{ score.colour }}"></span>{{ "grey: not enough signal" if score.evidence_state == "insufficient" else score.colour }}
-   (top {{ score.k }} of the book is red). Coverage: {{ score.coverage.total_event_count }} events,
-   {{ score.coverage.events_90d }} in 90 days from {{ score.coverage.n_sources_with_events_90d }} sources,
-   {{ score.coverage.account_tenure_days }} days of tenure.</p>
-<p id="reconciliation">Reconciliation: expected value <code>{{ score.expected_value | num }}</code> + sum of contributions
-   = <code>{{ total | num }}</code>; stored margin <code>{{ score.margin | num }}</code>:
-   <strong>{{ "reconciles" if reconciles else "DOES NOT RECONCILE" }}</strong>.
-   Reproduce it from the terminal with <code>python -m app rescore {{ score.score_id }}</code>.</p>
-{% if score.arrived_after %}<p class="late">{{ score.arrived_after }} events that happened by {{ score.as_of | ts }} arrived after this snapshot was built, so this score did not see them.</p>{% endif %}
-{% if score.briefing %}<p><strong>Briefing:</strong> {{ score.briefing }}</p>{% endif %}
+<div class="head">
+  <div>
+    <p class="sub"><a href="/list">My list</a> / <a href="/accounts/{{ score.account_id }}">{{ score.account }}</a></p>
+    <h1>Why {{ score.account }} scores {{ score.probability | pct }}</h1>
+    <p class="sub">Scored as of {{ score.as_of | ts }} by model <code>{{ score.model_version }}</code>.</p>
+  </div>
+  <a class="btn" href="/accounts/{{ score.account_id }}">Account timeline</a>
+</div>
+
+<div class="grid2">
+  <section class="card pad">
+    <div class="muted small">Probability that the next renewal is lost or contracts</div>
+    <div class="big">{{ score.probability | pct }}</div>
+    <p>{% if score.evidence_state == "insufficient" %}<span class="pill grey">grey: not enough signal</span>{% else %}<span class="pill {{ score.colour }}">{{ score.colour }}</span>{% endif %}
+       <span class="muted">rank {{ score.rank_in_book if score.rank_in_book is not none else "none" }} in the CSM's book; the top {{ score.k }} is red.</span></p>
+    <dl class="kv">
+      <dt>ARR</dt><dd>${{ score.arr | money }}</dd>
+      <dt>Renews in</dt><dd>{{ score.days_to_renewal }} days</dd>
+      <dt>Expected ARR at risk</dt><dd><strong>${{ score.rank_score | money }}</strong> (probability × ARR, the rank score)</dd>
+      <dt>Coverage</dt><dd>{{ score.coverage.total_event_count }} events, {{ score.coverage.events_90d }} in 90 days from {{ score.coverage.n_sources_with_events_90d }} sources, {{ score.coverage.account_tenure_days }} days of tenure</dd>
+    </dl>
+  </section>
+  <section class="card pad">
+    <div class="muted small">What this score saw, and how to check it</div>
+    <dl class="kv" style="margin: 8px 0 12px">
+      <dt>Snapshot</dt><dd>{{ score.snapshot_kind }} snapshot as of {{ score.as_of | ts }}</dd>
+      <dt>Events counted</dt><dd>received by {{ score.ingest_watermark | ts }}</dd>
+      <dt>Model</dt><dd><code>{{ score.model_version }}</code></dd>
+    </dl>
+    <p id="reconciliation" class="recon {{ '' if reconciles else 'fail' }}">Reconciliation: expected value <code>{{ score.expected_value | num }}</code> + sum of contributions
+       = <code>{{ total | num }}</code>; stored margin <code>{{ score.margin | num }}</code>:
+       <strong>{{ "reconciles" if reconciles else "DOES NOT RECONCILE" }}</strong>.
+       Reproduce it from a terminal with <code>python -m app rescore {{ score.score_id }}</code>.</p>
+    {% if score.arrived_after %}<p class="late">{{ score.arrived_after }} events that happened by {{ score.as_of | ts }} arrived after this snapshot was built, so this score did not see them. They count from the next night.</p>{% endif %}
+  </section>
+</div>
+
+{% if score.briefing %}<div class="callout" style="margin-top: 12px">{% if score.narration %}<p style="margin-top: 0"><strong>Summary:</strong> {{ score.narration }} <span class="small muted">Written by {{ score.narration_model }} from the briefing's reasons; every number checked against them.</span></p>{% endif %}<p style="margin: 0"><strong>Briefing:</strong> {{ score.briefing }}</p></div>{% endif %}
+
+<h2>Every factor, largest push towards risk first</h2>
+<p class="note">Contributions are in log-odds, against the average account. Red bars raise this account's risk, green bars lower it. Choose "raw events" to see exactly which events a factor was computed from.</p>
+<div class="card table">
 <table>
-  <thead><tr><th>Feature</th><th class="n">Value</th><th class="n">Contribution</th><th></th></tr></thead>
+  <thead><tr><th>Factor</th><th class="n">Value</th><th class="n">Contribution</th><th>Effect</th><th></th></tr></thead>
   <tbody>
-  <tr><td>expected_value (intercept)</td><td></td><td class="n">{{ score.expected_value | num }}</td><td></td></tr>
+  <tr><td>Average account <span class="fname">expected_value (intercept)</span></td><td></td><td class="n">{{ score.expected_value | num }}</td><td></td><td></td></tr>
   {% for r in rows %}
     <tr>
-      <td>{{ r.name }}</td>
+      <td>{{ r.label[:1] | upper }}{{ r.label[1:] }}<div class="fname">{{ r.name }}</div></td>
       <td class="n">{% if r.missing %}<span class="muted">{{ r.missing }}</span>{% else %}{{ r.value | num }}{% endif %}</td>
-      <td class="n">{{ r.contribution | num }}</td>
-      <td>{% if r.has_events %}<a href="#" hx-get="/scores/{{ score.score_id }}/events/{{ r.name }}" hx-target="#events" hx-swap="innerHTML">raw events</a>{% endif %}</td>
+      <td class="n {{ 'bad' if r.contribution > 0 else ('ok' if r.contribution < 0 else 'muted') }}">{{ r.contribution | num }}</td>
+      <td><div class="contrib"><div class="track">{% if r.contribution > 0 %}<div class="up" style="width: {{ r.width }}%"></div>{% elif r.contribution < 0 %}<div class="down" style="width: {{ r.width }}%"></div>{% endif %}</div></div></td>
+      <td>{% if r.has_events %}<a href="#events" hx-get="/scores/{{ score.score_id }}/events/{{ r.name }}" hx-target="#events" hx-swap="innerHTML">raw events</a>{% endif %}</td>
     </tr>
   {% endfor %}
-  <tr><th>margin</th><td></td><th class="n">{{ total | num }}</th><td></td></tr>
+  <tr><th>Total: the margin</th><td></td><th class="n">{{ total | num }}</th><td></td><td></td></tr>
   </tbody>
 </table>
-<div id="events" class="muted">Choose "raw events" on a feature to see what is behind it.</div>
+</div>
+<div id="events" class="card pad muted">Choose "raw events" on a factor to see what is behind it.</div>
 {% endblock %}

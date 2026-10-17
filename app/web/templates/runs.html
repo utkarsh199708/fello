@@ -1,22 +1,33 @@
 {% extends "base.html" %}
-{% block title %}Runs - Renewal risk{% endblock %}
+{% block title %}Nightly runs - Monday list{% endblock %}
 {% block body %}
-<h1>Nightly runs</h1>
-<p>Next scheduled run: {{ next_fire | ts if next_fire else "unknown (NIGHTLY_CRON is not a valid cron line)" }}. "schedule" means nobody triggered it.</p>
+{% set unattended = runs | selectattr("trigger", "equalto", "schedule") | list %}
+<div class="head">
+  <div>
+    <h1>Nightly runs</h1>
+    <p class="sub">Next scheduled run: {{ next_fire | ts if next_fire else "unknown (NIGHTLY_CRON is not a valid cron line)" }}. "schedule" means nobody triggered it.</p>
+  </div>
+</div>
+<section class="stats">
+  <div class="card stat"><div class="k">Unattended nights</div><div class="v">{{ unattended | length }}</div><div class="s">run by the scheduler, nobody pressed a button</div></div>
+  <div class="card stat"><div class="k">Last night</div><div class="v" style="font-size: 20px">{% if runs %}<span class="badge {{ runs[0].status }}">{{ runs[0].status }}</span>{% endif %}</div><div class="s">{{ runs[0].run_date if runs else "no runs yet" }}</div></div>
+  <div class="card stat"><div class="k">Each night</div><div class="v" style="font-size: 16px; line-height: 1.6">ingest → snapshot → score → gate → tasks</div><div class="s">a tripped data-quality gate publishes nothing</div></div>
+</section>
+<div class="card table">
 <table>
-  <thead><tr><th>Night</th><th>Status</th><th>Trigger</th><th class="n">Events in</th><th class="n">Scored</th><th class="n">Tasks</th><th class="n">Escalated</th><th class="n">Took (s)</th><th>Model</th></tr></thead>
+  <thead><tr><th>Night</th><th>Status</th><th>Trigger</th><th class="n">Events in</th><th class="n">Scored</th><th class="n">New tasks</th><th class="n">Escalated</th><th class="n">Took</th><th>Model</th></tr></thead>
   <tbody>
   {% for r in runs %}
     {% set a = r.counts.get("actions", {}) %}
     <tr>
-      <td><a href="/runs/{{ r.run_id }}">{{ r.run_date }}</a></td>
-      <td>{{ r.status }}{% if r.error %}<div class="muted">{{ r.error[:160] }}</div>{% endif %}</td>
-      <td>{{ r.trigger }}</td>
+      <td><a class="acct" href="/runs/{{ r.run_id }}">{{ r.run_date }}</a></td>
+      <td><span class="badge {{ r.status }}">{{ r.status }}</span>{% if r.error %}<div class="muted small">{{ r.error[:160] }}</div>{% endif %}</td>
+      <td><span class="badge {{ r.trigger }}">{{ r.trigger }}</span></td>
       <td class="n">{{ r.counts.get("events_normalised", "") }}</td>
       <td class="n">{{ r.counts.get("accounts_scored", "") }}</td>
       <td class="n">{{ a.get("tasks_created", "") }}</td>
       <td class="n">{{ a.get("tasks_escalated", "") }}</td>
-      <td class="n">{{ "%.1f" | format((r.stage_ms.values() | sum) / 1000) if r.stage_ms else "" }}</td>
+      <td class="n">{{ "%.1f s" | format((r.stage_ms.values() | sum) / 1000) if r.stage_ms else "" }}</td>
       <td><code>{{ r.model_version or "" }}</code></td>
     </tr>
   {% else %}
@@ -24,4 +35,5 @@
   {% endfor %}
   </tbody>
 </table>
+</div>
 {% endblock %}

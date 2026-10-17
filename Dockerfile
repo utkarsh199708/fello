@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-# One image runs both processes. Compose and Railway choose the command:
+# One image runs both processes. Compose chooses the command:
 #   web:    python -m app web
 #   worker: python -m app worker
 # python:3.11-slim, resolved on 2026-10-16 to Python 3.11.17 on Debian trixie.

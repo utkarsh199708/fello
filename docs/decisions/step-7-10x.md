@@ -14,7 +14,7 @@ Date: 2026-10-17. Task 7.2. Every number below is a measurement, followed by a l
 | t4 | 600 | 28,930 | 0.6 s | 1.2 s | 0.6 s | 0.1 s | 2.4 s |
 | t5 | 300 | 3,756 | 0.1 s | 0.2 s | 0.4 s | 0.0 s | 0.7 s |
 
-The whole night took 21 s.
+The whole night took 21 s. That night ran on the Step 4 build, before the decision stages (transitions, policy and tasks, escalation) were deployed at 06:28 UTC the same day. On the local copy of the full dataset those stages add under a second for t1: 217 ms for transitions, 634 ms for policy and tasks and 3 ms for escalation.
 
 - The snapshot stage scales with the tenant's events: about 0.05 ms per normalised event. It reads all of the tenant's events into pandas.
 - Scoring scales with accounts: about 1.07 ms per account.
@@ -30,13 +30,13 @@ The first bootstrap took about 14.5 minutes on this VM for feature set fs3: anch
 | t2 | 40,450 | 1.7 s | 598 ms | 21 MB | 54 MB |
 | t4 | 25,387 | 1.8 s | 543 ms | 14 MB | 31 MB |
 
-That is about 0.4 s of fixed cost per Monday plus about 7 µs per event. Memory is about 540 bytes per event in the frame, and about 1.2 KB per event at peak. The weekly anchors (157 Mondays for a 36-month tenant) repeat that pass every week, so bootstrap is O(weeks × events). The VM runs about 2.8 times slower than the laptop.
+That is about 0.4 s of fixed cost per Monday plus about 7 µs per event. Memory is about 540 bytes per event in the frame, and about 1.2 KB per event at peak. The weekly anchors (147 Mondays: 36 months less a 12-week warm-up) repeat that pass every week, so bootstrap is O(weeks × events). The VM runs about 2.8 times slower than the laptop.
 
 ## Extrapolation, one axis at a time
 
 | Axis | Nightly run | Bootstrap (anchors and training) | Storage | What breaks |
 |---|---|---|---|---|
-| **10x events** (2M), same accounts | t1's snapshot reads 740,000 events: about 45 s, plus about 40 s to load. The whole night is about 4 minutes. **Fine** | t1 alone: 157 Mondays × (0.4 + 7 µs × 740,000) s, about 15 minutes locally and about 40 minutes on the VM. The events frame is about 400 MB, peaking near 0.9 GB in Python before pandas copies. **Breaks first:** a 2 GB VM that also runs Postgres and the web process swaps and then runs out of memory | `raw_events` and `normalised_events` grow to about 1.8 GB | **The bootstrap's anchor build, on memory then time** |
+| **10x events** (2M), same accounts | t1's snapshot reads 740,000 events: about 45 s, plus about 40 s to load. The whole night is about 4 minutes. **Fine** | t1 alone: 147 Mondays × (0.4 + 7 µs × 740,000) s, about 14 minutes locally and about 40 minutes on the VM. The events frame is about 400 MB, peaking near 0.9 GB in Python before pandas copies. **Breaks first:** a 2 GB VM that also runs Postgres and the web process swaps and then runs out of memory | `raw_events` and `normalised_events` grow to about 1.8 GB | **The bootstrap's anchor build, on memory then time** |
 | **10x accounts** (50,000, events growing with them) | Scoring about 20 s per t1-sized tenant, and 50,000 score rows a night with full contribution vectors (about 100 MB a night) | As above, plus 3.2M anchor rows written | `snapshots` about 4.5 GB, and `scores` about 3 GB a month | **Disk within weeks** on a 20 GB disk, then training memory: 3.2M JSON feature rows read into pandas |
 | **10x tenants** (50) | The per-tenant loop is sequential: about 210 s. One failure is still isolated to its tenant. **Fine** | 10x the anchors work, about 4 hours on the VM. Training reads every tenant's anchors at once as `app_batch` | As 10x accounts | **Training memory**, and a bootstrap too long for a deploy |
 | LLM narration | Scales with tasks created (at most k per CSM a night), not with accounts. It is off today | | | Not a first failure |

@@ -102,6 +102,72 @@ FEATURE_SOURCE = {
     "days_since_last_inbound": "gmail",
 }
 
+# Reasons a CSM can act on: the signals from each source, and a past contraction. Contract and
+# coverage features (ARR, days to renewal, tenure, event counts) shape the score too, and their
+# contributions stay on the score row, but "your contract is large" is not a reason to call.
+REASON_FEATURES = frozenset(FEATURE_SOURCE) | {"prior_contraction"}
+PERCENT_FEATURES = frozenset({"seat_utilisation", "usage_change_last_month_vs_prior_3"})
+
+# Plain words for the reasons a CSM reads. A feature not listed is shown by its name.
+FEATURE_LABELS = {
+    "tickets_30d": "support tickets in the last 30 days",
+    "tickets_90d": "support tickets in the last 90 days",
+    "ticket_rate_30d_vs_prior_90d": "ticket pace against the previous three months",
+    "open_tickets": "open tickets",
+    "high_priority_30d": "high-priority tickets in the last 30 days",
+    "mean_csat_90d": "average CSAT over 90 days",
+    "days_since_last_ticket": "days since the last ticket",
+    "active_users_last_month": "active users last month",
+    "sessions_last_month": "sessions last month",
+    "usage_change_last_month_vs_prior_3": "change in active users against the prior 3 months",
+    "seat_utilisation": "share of purchased seats in use",
+    "months_since_last_activity": "months since the last product activity",
+    "failed_payments_90d": "failed payments in the last 90 days",
+    "unrecovered_failure_90d": "an unpaid failed invoice",
+    "days_since_last_failure": "days since the last failed payment",
+    "threads_90d": "email threads in the last 90 days",
+    "outbound_unanswered_30d": "unanswered outbound email threads in the last 30 days",
+    "bounce_or_autoreply_90d": "bounced or auto-replied emails in the last 90 days",
+    "days_since_last_inbound": "days since the customer last wrote",
+    "missing_field_count": "gaps in the CRM record",
+    "arr": "contract size",
+    "days_to_renewal": "days to renewal",
+    "account_tenure_days": "account age in days",
+    "total_event_count": "activity on record",
+    "events_90d": "events in the last 90 days",
+    "n_sources_with_events_90d": "sources with events in the last 90 days",
+    "cycle_number": "contract cycle",
+    "prior_contraction": "contracted at the last renewal",
+    "zendesk_connected": "Zendesk connected",
+    "product_connected": "product analytics connected",
+    "stripe_connected": "Stripe connected",
+    "gmail_connected": "Gmail connected",
+}
+
+# Two or three words for a reason chip on the Monday list. The full label is its tooltip.
+SHORT_LABELS = {
+    "tickets_30d": "Tickets 30d",
+    "tickets_90d": "Tickets 90d",
+    "ticket_rate_30d_vs_prior_90d": "Ticket pace",
+    "open_tickets": "Open tickets",
+    "high_priority_30d": "High-priority tickets",
+    "mean_csat_90d": "CSAT 90d",
+    "days_since_last_ticket": "Days since a ticket",
+    "active_users_last_month": "Active users",
+    "sessions_last_month": "Sessions",
+    "usage_change_last_month_vs_prior_3": "Usage change",
+    "seat_utilisation": "Seats in use",
+    "months_since_last_activity": "Months inactive",
+    "failed_payments_90d": "Failed payments",
+    "unrecovered_failure_90d": "Unpaid invoice",
+    "days_since_last_failure": "Days since a failed payment",
+    "threads_90d": "Email threads",
+    "outbound_unanswered_30d": "Unanswered emails",
+    "bounce_or_autoreply_90d": "Bounces",
+    "days_since_last_inbound": "Days since they wrote",
+    "prior_contraction": "Contracted last renewal",
+}
+
 # Features where NULL is normal even with the source connected: most accounts have no rated
 # ticket in 90 days. The data-quality gate does not cap their NULL rate.
 SPARSE_FEATURES = frozenset({"mean_csat_90d"})

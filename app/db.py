@@ -3,7 +3,8 @@
 Three login roles share one database (docs/PLAN.md section 8, "RLS, real"):
 
 - ``app_owner`` owns every table and runs migrations. Nothing else connects as it.
-- ``app_batch`` has BYPASSRLS. Only the trainer uses it, as the one deliberate cross-tenant reader.
+- ``app_batch`` has BYPASSRLS. The trainer, ``evaluate`` and ``rescore`` use it, as the deliberate
+  cross-tenant readers.
 - ``app`` is an ordinary role for web, worker and loader. Row-level security binds it.
 
 Every tenant-scoped table has FORCE ROW LEVEL SECURITY and the policy
@@ -43,7 +44,7 @@ ROLE_ATTRIBUTES = {
 def admin_url() -> str:
     """Return ``DATABASE_URL`` with the driver SQLAlchemy needs.
 
-    Railway issues ``postgresql://`` URLs (some tools write ``postgres://``). Without the
+    Many hosts issue ``postgresql://`` URLs (some tools write ``postgres://``). Without the
     ``+psycopg`` suffix SQLAlchemy would pick psycopg2, which is not installed.
     """
     url = os.environ.get("DATABASE_URL", "")

@@ -23,6 +23,8 @@ own, all inside ``tenant_tx`` so row-level security binds every read and write:
 
    Briefings (stage 8 of PLAN.md) are written with their tasks, in stage 6. A failure part-way,
    or a tripped gate, rolls everything back: nothing of that night is published.
+   The optional LLM narration of the briefings runs only after a night has succeeded and been
+   recorded, outside this transaction (``app.jobs.narrate``), so it can never fail a night.
 3. **Finish.** Record ``succeeded``, ``blocked`` (the gate tripped; the reason is in ``error`` and
    every measured value in ``counts.gate``) or ``failed`` with counts, stage timings and the error.
    This is a separate transaction so that a failed night is still recorded after the work rolled
@@ -52,6 +54,7 @@ from app.ids import stable_uuid
 from app.ingest.resolve import ingest_watermark, resolve
 from app.jobs.actions import apply_actions
 from app.jobs.gate import GateTripped, run_checks
+from app.jobs.narrate import narrate_run
 from app.jobs.policy import POLICY_VERSION
 from app.ml.features import write_snapshots
 from app.ml.score import active_model, score_tenant
@@ -169,7 +172,19 @@ def run_tenant(tenant_id: UUID, as_of: datetime, trigger: str, force: bool = Fal
         log.exception("nightly %s: could not record the result", tenant_id)
         return TenantRun(tenant_id, run_id, "failed", result.counts, describe(exc))
     log.info("nightly %s %s: %s %s", tenant_id, as_of.date(), status, result.counts)
+    if status == "succeeded":
+        narrate_after(tenant_id, run_id)
     return TenantRun(tenant_id, run_id, status, result.counts, error)
+
+
+def narrate_after(tenant_id: UUID, run_id: UUID) -> None:
+    """The optional LLM narration, after the night is committed and recorded. Never raises."""
+    try:
+        counts = narrate_run(tenant_id, run_id)
+        if counts:
+            log.info("nightly %s: narrations %s", tenant_id, counts)
+    except Exception:  # e.g. the database blinked: the night itself is already safe
+        log.exception("nightly %s: narration failed", tenant_id)
 
 
 def claim(

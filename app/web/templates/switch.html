@@ -1,24 +1,29 @@
 {% extends "base.html" %}
-{% block title %}Switch - Renewal risk{% endblock %}
+{% block title %}Choose an organisation - Monday list{% endblock %}
 {% block body %}
-<h1>Switch tenant and CSM</h1>
-<h2>1. Tenant</h2>
-<ul>
+<div class="head">
+  <div>
+    <h1>Whose Monday list?</h1>
+    <p class="sub">Pick an organisation, then a CSM. Each organisation is a separate tenant: the database only ever shows the one you pick.</p>
+  </div>
+</div>
+<h2>1. Organisation</h2>
+<div class="tenants">
 {% for t in tenants %}
-  <li>{% if t.tenant_id == chosen %}<strong>{{ t.name }}</strong>{% else %}<a href="/switch?tenant_id={{ t.tenant_id }}">{{ t.name }}</a>{% endif %}
-      <span class="muted">{{ t.slug }}, {{ t.segment }}</span></li>
+  <a class="card tenant {{ 'on' if t.tenant_id == chosen else '' }}" href="/switch?tenant_id={{ t.tenant_id }}">{% if t.tenant_id == chosen %}<strong>{{ t.name }}</strong>{% else %}<b>{{ t.name }}</b>{% endif %}
+    <span class="muted">{{ t.slug }}, {{ t.segment }}</span></a>
 {% endfor %}
-</ul>
+</div>
 {% if chosen %}
 <h2>2. CSM</h2>
-<form method="post" action="/switch">
+<form method="post" action="/switch" class="card pad" style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap; max-width: 640px">
   <input type="hidden" name="tenant_id" value="{{ chosen }}">
   <input type="hidden" name="csrf" value="{{ csrf }}">
-  <select name="csm_id" required>
+  <select name="csm_id" required aria-label="CSM">
     {% for c in csms %}<option value="{{ c.csm_id }}">{{ c.name }} ({{ c.email }})</option>{% endfor %}
     <option value="unassigned">Unassigned (accounts with no CSM)</option>
   </select>
-  <button type="submit">Show my list</button>
+  <button type="submit" class="primary">Show my list</button>
 </form>
 {% endif %}
 {% endblock %}

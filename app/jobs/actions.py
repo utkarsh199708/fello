@@ -28,45 +28,12 @@ from sqlalchemy.engine import Connection
 
 from app.ids import stable_uuid
 from app.jobs.policy import ACTIVE, ANTI_FLAP_RUNS, POLICY_VERSION, Candidate, History, decide
-from app.ml.feature_spec import FEATURE_SOURCE
+from app.ml.feature_spec import FEATURE_LABELS, FEATURE_SOURCE, PERCENT_FEATURES, REASON_FEATURES
 
 ESCALATE_AFTER_BUSINESS_DAYS = 5
 ESCALATE_WITHIN_RENEWAL_DAYS = 60
 TOP_REASONS = 5
-# Reasons a CSM can act on: the signals from each source, and a past contraction. Contract and
-# coverage features (ARR, days to renewal, tenure, event counts) shape the score too, and their
-# contributions stay on the score row, but "your contract is large" is not a reason to call.
-REASON_FEATURES = frozenset(FEATURE_SOURCE) | {"prior_contraction"}
-PERCENT_FEATURES = frozenset({"seat_utilisation", "usage_change_last_month_vs_prior_3"})
 BRIEFING_TEMPLATE = "reasons-v1"
-
-# Plain words for the reasons a CSM reads. A feature not listed is shown by its name.
-FEATURE_LABELS = {
-    "tickets_30d": "support tickets in the last 30 days",
-    "tickets_90d": "support tickets in the last 90 days",
-    "ticket_rate_30d_vs_prior_90d": "ticket pace against the previous three months",
-    "open_tickets": "open tickets",
-    "high_priority_30d": "high-priority tickets in the last 30 days",
-    "mean_csat_90d": "average CSAT over 90 days",
-    "days_since_last_ticket": "days since the last ticket",
-    "active_users_last_month": "active users last month",
-    "sessions_last_month": "sessions last month",
-    "usage_change_last_month_vs_prior_3": "change in active users against the prior 3 months",
-    "seat_utilisation": "share of purchased seats in use",
-    "months_since_last_activity": "months since the last product activity",
-    "failed_payments_90d": "failed payments in the last 90 days",
-    "unrecovered_failure_90d": "an unpaid failed invoice",
-    "days_since_last_failure": "days since the last failed payment",
-    "threads_90d": "email threads in the last 90 days",
-    "outbound_unanswered_30d": "unanswered outbound email threads in the last 30 days",
-    "bounce_or_autoreply_90d": "bounced or auto-replied emails in the last 90 days",
-    "days_since_last_inbound": "days since the customer last wrote",
-    "missing_field_count": "gaps in the CRM record",
-    "arr": "contract size",
-    "days_to_renewal": "days to renewal",
-    "account_tenure_days": "account age in days",
-    "total_event_count": "activity on record",
-}
 
 
 @dataclass
@@ -81,7 +48,7 @@ class ActionCounts:
     briefings: int = 0
     rebaselined: bool = False
     seeded: bool = False
-    llm_calls: int = 0  # narration is off (D5): the briefing is the reason list and its template
+    llm_calls: int = 0  # always 0 here: narration runs after the night (app.jobs.narrate)
     by_rule: dict[str, int] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
@@ -229,6 +196,18 @@ def reasons_of(score, features: dict) -> list[dict]:
     return out
 
 
+def reason_value_text(r: dict) -> str:
+    """One reason's value as the briefing writes it. NULL is "<Source> not connected", never 0."""
+    value = r["value"]
+    if value is None:
+        return f"{r['source'].title()} not connected" if not r["connected"] else "no data yet"
+    if r.get("feature") in PERCENT_FEATURES:
+        return f"{value:+.0%}" if r["feature"].startswith("usage_change") else f"{value:.0%}"
+    if isinstance(value, float):
+        return f"{value:,.2f}".rstrip("0").rstrip(".")
+    return str(value)
+
+
 def render_briefing(score, reasons: list[dict]) -> str:
     """Template text from the reason list alone, so the text can claim nothing else.
 
@@ -240,22 +219,7 @@ def render_briefing(score, reasons: list[dict]) -> str:
     )
     if not reasons:
         return head + " No single factor stands out; review the account timeline."
-    parts = []
-    for r in reasons:
-        if r["value"] is None:
-            what = f"{r['source'].title()} not connected" if not r["connected"] else "no data yet"
-            parts.append(f"{r['label']}: {what}")
-        else:
-            value = r["value"]
-            if r.get("feature") in PERCENT_FEATURES:
-                shown = (
-                    f"{value:+.0%}" if r["feature"].startswith("usage_change") else f"{value:.0%}"
-                )
-            elif isinstance(value, float):
-                shown = f"{value:,.2f}".rstrip("0").rstrip(".")
-            else:
-                shown = value
-            parts.append(f"{r['label']}: {shown}")
+    parts = [f"{r['label']}: {reason_value_text(r)}" for r in reasons]
     return head + " What raises the risk most: " + "; ".join(parts) + "."
 
 

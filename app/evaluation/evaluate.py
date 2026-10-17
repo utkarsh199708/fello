@@ -546,8 +546,8 @@ def render(r: dict) -> str:
         f"Planted cases: {caught} of {len(planted)} entered their CSM's top 8 at least 4 weeks"
         f" before the notice deadline; the top reason was a ticket or usage feature for"
         f" {matched} of {len(planted)}.",
-        f"Worst misses: {r['worst_misses_total']} lost renewals never reached their CSM's top 8."
-        + (" Largest:" if r["worst_misses"] else ""),
+        f"Worst misses: {r['worst_misses_total']} renewals lost or contracted never reached their"
+        " CSM's top 8." + (" Largest:" if r["worst_misses"] else ""),
     ]
     out += [
         f"- {m['tenant']} {m['account']}, ARR {m['arr']:,.0f}, renewal {m['renewal_date']}"

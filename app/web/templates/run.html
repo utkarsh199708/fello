@@ -1,24 +1,45 @@
 {% extends "base.html" %}
-{% block title %}Run - Renewal risk{% endblock %}
+{% block title %}Night of {{ run.run_date }} - Monday list{% endblock %}
 {% block body %}
-<h1>Night of {{ run.run_date }}</h1>
-<p>Status <strong>{{ run.status }}</strong>, trigger {{ run.trigger }}, as of {{ run.as_of | ts }},
-   model <code>{{ run.model_version or "none" }}</code>, policy {{ run.policy_version or "none" }}.
-   Started {{ run.started_at | ts }}, finished {{ run.finished_at | ts if run.finished_at else "not yet" }}.
+{% set total_ms = run.stage_ms.values() | sum if run.stage_ms else 0 %}
+<div class="head">
+  <div>
+    <p class="sub"><a href="/runs">Nightly runs</a> / {{ run.run_date }}</p>
+    <h1>Night of {{ run.run_date }}</h1>
+    <p class="sub"><span class="badge {{ run.status }}">{{ run.status }}</span> <span class="badge {{ run.trigger }}">{{ run.trigger }}</span>
+      as of {{ run.as_of | ts }} · model <code>{{ run.model_version or "none" }}</code> · policy {{ run.policy_version or "none" }}</p>
+  </div>
+</div>
+<p class="note">Started {{ run.started_at | ts }}, finished {{ run.finished_at | ts if run.finished_at else "not yet" }}.
    Events received by {{ run.ingest_watermark | ts if run.ingest_watermark else "none" }} were counted.</p>
 {% if run.error %}<p class="stale">{{ run.error }}</p>{% endif %}
-<h2>Stages</h2>
-<table>
-  <thead><tr><th>Stage</th><th class="n">ms</th></tr></thead>
-  <tbody>{% for stage, ms in run.stage_ms.items() %}<tr><td>{{ stage | replace("_", " ") }}</td><td class="n">{{ ms }}</td></tr>{% endfor %}</tbody>
-</table>
-<p>Transitions: {{ run.transitions.total }} accounts compared with the night before, {{ run.transitions.entered }} entered a top k, {{ run.transitions.left }} left one.</p>
+
+<div class="grid2">
+  <section class="card pad">
+    <h2 style="margin-top: 0">Stages</h2>
+    <table>
+      <thead><tr><th>Stage</th><th></th><th class="n">ms</th></tr></thead>
+      {% set order = ["ingest", "snapshot", "score", "gate", "transitions", "policy_and_tasks", "escalation"] %}
+      {% set stages = order | select("in", run.stage_ms) | list + (run.stage_ms | reject("in", order) | list) %}
+      <tbody>{% for stage in stages %}{% set ms = run.stage_ms[stage] %}<tr><td>{{ stage | replace("_", " ") }}</td><td style="width: 55%"><div class="stage"><div class="track"><div class="fill" style="width: {{ (ms / total_ms * 100) | round(1) if total_ms else 0 }}%"></div></div></div></td><td class="n">{{ ms }}</td></tr>{% endfor %}</tbody>
+    </table>
+  </section>
+  <section class="card pad">
+    <h2 style="margin-top: 0">What the night decided</h2>
+    <p>Transitions: {{ run.transitions.total }} accounts compared with the night before, {{ run.transitions.entered }} entered a top k, {{ run.transitions.left }} left one.</p>
+    <p class="muted small">A task opens when an account enters its CSM's top k after three nights outside it, or when its probability has risen more than 15 points since its last task. Never two at once for one account, and at most k new tasks per CSM per night. The rules live in one pure function, <code>app/jobs/policy.py</code>, version {{ run.policy_version or "none" }}.</p>
+  </section>
+</div>
+
 <h2>Tasks raised this night ({{ run.tasks | length }})</h2>
+<div class="card table">
 <table>
   <thead><tr><th>Account</th><th>Rule</th><th>Queue</th><th>Status now</th></tr></thead>
-  <tbody>{% for t in run.tasks %}<tr><td><a href="/accounts/{{ t.account_id }}">{{ t.account }}</a></td><td>{{ t.rule_fired }}</td><td>{{ t.queue }}</td><td>{{ t.status }}</td></tr>
+  <tbody>{% for t in run.tasks %}<tr><td><a class="acct" href="/accounts/{{ t.account_id }}">{{ t.account }}</a></td><td>{{ t.rule_fired | replace("_", " ") }}</td><td>{{ t.queue | replace("_", " ") }}</td><td><span class="badge {{ t.status }}">{{ t.status }}</span></td></tr>
   {% else %}<tr><td colspan="4" class="muted">None.</td></tr>{% endfor %}</tbody>
 </table>
-<h2>Counts</h2>
-<pre>{{ run.counts | tojson(indent=2) }}</pre>
+</div>
+<details style="margin-top: 16px"><summary class="muted">Raw counts for this night</summary>
+<pre class="card pad" style="margin-top: 8px">{{ run.counts | tojson(indent=2) }}</pre>
+</details>
 {% endblock %}

@@ -28,6 +28,7 @@ COMMANDS = {
     "evaluate": "app.evaluation.evaluate",
     "nightly": "app.jobs.cli",
     "bootstrap": "app.jobs.cli",
+    "narrate": "app.jobs.cli",
     "worker": "app.jobs.worker",
     "web": "app.web.main",
 }
