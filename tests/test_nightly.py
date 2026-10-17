@@ -69,8 +69,18 @@ def test_one_job_runs_row_per_tenant(seeded):
             "accounts_scored",
             "gate",  # every value the data-quality gate measured (task 3.6)
             "mean_probability",
+            "actions",  # transitions, tasks, escalations and briefings (Step 5)
         }
-        assert set(row.stage_ms) == {"ingest", "snapshot", "score", "gate"}
+        assert set(row.stage_ms) == {
+            "ingest",
+            "snapshot",
+            "score",
+            "gate",
+            "transitions",
+            "policy_and_tasks",
+            "escalation",
+        }
+        assert row.policy_version == "1"
 
         # The counts are the rows this night actually wrote.
         resolved = count(

@@ -252,6 +252,57 @@ def create_app() -> FastAPI:
             },
         )
 
+    @app.post("/admin/jobs/nightly")
+    async def admin_nightly(request: Request) -> JSONResponse:
+        """Run the nightly job now, for a demo or a missed night (task 5.7). Behind basic auth.
+
+        Body: JSON ``{"as_of": "<ISO 8601>", "tenant": "<slug or uuid>"}``, both optional; the
+        default is "now" (``CLOCK_OVERRIDE`` honoured) and every tenant. It calls the same
+        ``run_nightly`` as the scheduler, with ``trigger="manual"``, so the run is in job_runs
+        like any other. JSON only: an HTML form cannot send it cross-site without a CORS
+        preflight, which this app never grants, so the endpoint is not open to CSRF.
+        """
+        if request.headers.get("content-type", "").split(";")[0].strip() != "application/json":
+            raise HTTPException(415, "send a JSON body")
+        try:
+            body = await request.json()
+        except ValueError as exc:
+            raise HTTPException(400, "body is not JSON") from exc
+        if not isinstance(body, dict):
+            raise HTTPException(400, "body must be a JSON object")
+        # Imported here: the job loads pandas and the model, which ordinary pages never need.
+        from starlette.concurrency import run_in_threadpool
+
+        from app.clock import now_utc
+        from app.config import parse_utc
+        from app.jobs.nightly import run_nightly
+
+        try:
+            as_of = parse_utc(body["as_of"]) if body.get("as_of") else now_utc()
+        except ValueError as exc:
+            raise HTTPException(400, f"as_of: {exc}") from exc
+        tenant = body.get("tenant")
+        try:
+            runs = await run_in_threadpool(run_nightly, as_of, tenant, "manual")
+        except ValueError as exc:  # an unknown tenant, or an argument run_nightly refuses
+            status = 404 if "unknown tenant" in str(exc) else 400
+            raise HTTPException(status, str(exc)) from exc
+        return JSONResponse(
+            {
+                "as_of": as_of.isoformat(),
+                "runs": [
+                    {
+                        "tenant_id": str(r.tenant_id),
+                        "run_id": str(r.run_id),
+                        "status": r.status,
+                        "error": r.error,
+                        "counts": r.counts,
+                    }
+                    for r in runs
+                ],
+            }
+        )
+
     @app.get("/health")
     def health() -> JSONResponse:
         """Counts and status only, so a platform check can call it without credentials."""

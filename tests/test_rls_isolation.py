@@ -70,7 +70,8 @@ def insert_quarantined_event(tenant_id) -> None:
 
 
 def insert_task(tenant_id) -> None:
-    """tasks stays empty until Step 5, so write one per tenant through the normal runtime path."""
+    """Since Step 5 the nightly job writes tasks itself; this probe makes sure each tenant has one
+    even if no account entered a top 8, through the normal runtime path."""
     with tenant_tx(tenant_id) as conn:
         score = conn.execute(
             sa.text(
@@ -82,7 +83,7 @@ def insert_task(tenant_id) -> None:
                 "INSERT INTO tasks (task_id, tenant_id, account_id, run_date, score_id, run_id,"
                 " rule_fired, policy_version)"
                 " VALUES (gen_random_uuid(), :tid, :acc, DATE '2026-10-13', :score, :run,"
-                " 'qa_probe', 'qa')"
+                " 'qa_probe', 'qa') ON CONFLICT (tenant_id, account_id, run_date) DO NOTHING"
             ),
             {
                 "tid": tenant_id,

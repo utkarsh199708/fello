@@ -7,10 +7,22 @@ own, all inside ``tenant_tx`` so row-level security binds every read and write:
    ``running``. The row is unique on (job_name, tenant_id, run_date). If it already exists and
    ``succeeded``, nothing is written and the tenant's result is ``no_op``: a night that has rows
    is never rewritten. A ``failed`` or ``blocked`` row, or a ``running`` row left behind by a
-   crash, is claimed again and re-executed under the same ``run_id``.
-2. **Work.** ``resolve`` the events received by ``as_of``, write the nightly snapshot, score it,
-   then run the data-quality gate (``app.jobs.gate``). One transaction, so a failure part-way, or
-   a tripped gate, leaves no half-written night behind: nothing of that night is published.
+   crash, is claimed again and re-executed under the same ``run_id``. ``force`` also re-runs a
+   succeeded night, but only the tenant's latest one, and every write is keyed, so it adds what
+   is missing and changes nothing already published.
+2. **Work.** Eight stages in one transaction, each timed in ``stage_ms``:
+
+   1. ingest: resolve the events received by ``as_of``;
+   2. snapshot: write the nightly feature snapshot;
+   3. score: score it with the active model;
+   4. gate: the data-quality gate (``app.jobs.gate``). It runs after scoring because its
+      mean-shift check needs tonight's scores; nothing after it runs if it trips;
+   5. transitions: compare ranks with the previous night (``app.jobs.actions``);
+   6. policy and tasks: ``app.jobs.policy`` decides, then tasks and briefings are written;
+   7. escalation.
+
+   Briefings (stage 8 of PLAN.md) are written with their tasks, in stage 6. A failure part-way,
+   or a tripped gate, rolls everything back: nothing of that night is published.
 3. **Finish.** Record ``succeeded``, ``blocked`` (the gate tripped; the reason is in ``error`` and
    every measured value in ``counts.gate``) or ``failed`` with counts, stage timings and the error.
    This is a separate transaction so that a failed night is still recorded after the work rolled
@@ -38,7 +50,9 @@ from sqlalchemy.engine import Connection
 from app.db import tenant_ids, tenant_tx
 from app.ids import stable_uuid
 from app.ingest.resolve import ingest_watermark, resolve
+from app.jobs.actions import apply_actions
 from app.jobs.gate import GateTripped, run_checks
+from app.jobs.policy import POLICY_VERSION
 from app.ml.features import write_snapshots
 from app.ml.score import active_model, score_tenant
 
@@ -59,6 +73,10 @@ CLAIM_SQL = sa.text(
         model_version = NULL, ingest_watermark = NULL, counts = '{}', stage_ms = '{}',
         error = NULL, started_at = now(), finished_at = NULL
     WHERE job_runs.status IN ('failed', 'blocked', 'running')
+       OR (:force AND NOT EXISTS (
+               SELECT 1 FROM job_runs later
+               WHERE later.job_name = job_runs.job_name AND later.tenant_id = job_runs.tenant_id
+                 AND later.run_date > job_runs.run_date))
     RETURNING run_id
     """
 )
@@ -67,6 +85,7 @@ FINISH_SQL = sa.text(
     """
     UPDATE job_runs
     SET status = :status, model_version = :model_version, ingest_watermark = :watermark,
+        policy_version = :policy_version,
         counts = CAST(:counts AS jsonb), stage_ms = CAST(:stage_ms AS jsonb), error = :error,
         finished_at = now()
     WHERE run_id = :run_id
@@ -99,7 +118,7 @@ def run_id_for(tenant_id: UUID, run_date) -> UUID:
 
 
 def run_nightly(
-    as_of: datetime, tenant: str | UUID | None = None, trigger: str = "cli"
+    as_of: datetime, tenant: str | UUID | None = None, trigger: str = "cli", force: bool = False
 ) -> list[TenantRun]:
     """Run the night at ``as_of`` for every tenant (or the one named by slug or UUID).
 
@@ -111,14 +130,14 @@ def run_nightly(
     if trigger not in TRIGGERS:
         raise ValueError(f"trigger must be one of {TRIGGERS}, got {trigger!r}")
     as_of = as_of.astimezone(UTC)
-    return [run_tenant(tid, as_of, trigger) for tid in tenant_ids(tenant)]
+    return [run_tenant(tid, as_of, trigger, force) for tid in tenant_ids(tenant)]
 
 
-def run_tenant(tenant_id: UUID, as_of: datetime, trigger: str) -> TenantRun:
+def run_tenant(tenant_id: UUID, as_of: datetime, trigger: str, force: bool = False) -> TenantRun:
     """Claim, work and finish one tenant's night. Every failure is caught and recorded."""
     run_id = run_id_for(tenant_id, as_of.date())
     try:
-        claimed = claim(tenant_id, run_id, as_of, trigger)
+        claimed = claim(tenant_id, run_id, as_of, trigger, force)
     except Exception as exc:  # e.g. the database is unreachable: nothing could be recorded
         log.exception("nightly %s: claim failed", tenant_id)
         return TenantRun(tenant_id, run_id, "failed", error=describe(exc))
@@ -129,7 +148,7 @@ def run_tenant(tenant_id: UUID, as_of: datetime, trigger: str) -> TenantRun:
     result = WorkResult()
     try:
         with tenant_tx(tenant_id) as conn:
-            do_work(conn, tenant_id, as_of, run_id, result)
+            do_work(conn, tenant_id, as_of, run_id, result, trigger)
         status, error = "succeeded", None
     except GateTripped as tripped:
         # Rolled back like a failure, but the measurements are the point: keep them on the row.
@@ -153,7 +172,9 @@ def run_tenant(tenant_id: UUID, as_of: datetime, trigger: str) -> TenantRun:
     return TenantRun(tenant_id, run_id, status, result.counts, error)
 
 
-def claim(tenant_id: UUID, run_id: UUID, as_of: datetime, trigger: str) -> bool:
+def claim(
+    tenant_id: UUID, run_id: UUID, as_of: datetime, trigger: str, force: bool = False
+) -> bool:
     """Insert or take over the night's job_runs row. False means it already succeeded."""
     with tenant_tx(tenant_id) as conn:
         row = conn.execute(
@@ -165,13 +186,19 @@ def claim(tenant_id: UUID, run_id: UUID, as_of: datetime, trigger: str) -> bool:
                 "run_date": as_of.date(),
                 "as_of": as_of,
                 "trigger": trigger,
+                "force": force,
             },
         ).one_or_none()
     return row is not None
 
 
 def do_work(
-    conn: Connection, tenant_id: UUID, as_of: datetime, run_id: UUID, result: WorkResult
+    conn: Connection,
+    tenant_id: UUID,
+    as_of: datetime,
+    run_id: UUID,
+    result: WorkResult,
+    trigger: str = "cli",
 ) -> None:
     """Ingest, snapshot and score inside the caller's transaction, filling ``result`` as it goes.
 
@@ -221,6 +248,17 @@ def do_work(
     # The next night compares its mean against this one (gate check mean_shift).
     result.counts["mean_probability"] = gate.checks["mean_probability"]
 
+    actions = apply_actions(
+        conn,
+        tenant_id,
+        run_id,
+        as_of,
+        result.model_version,
+        bootstrap_night=trigger == "bootstrap",
+        stage_ms=result.stage_ms,
+    )
+    result.counts["actions"] = actions.as_dict()
+
 
 def finish(
     tenant_id: UUID, run_id: UUID, status: str, result: WorkResult, error: str | None
@@ -236,6 +274,7 @@ def finish(
                 "counts": json.dumps(result.counts),
                 "stage_ms": json.dumps(result.stage_ms),
                 "error": error,
+                "policy_version": POLICY_VERSION,
             },
         )
 

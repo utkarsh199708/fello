@@ -25,7 +25,7 @@ def _nightly(args: argparse.Namespace) -> int:
 
     as_of = parse_utc(args.as_of)
     print(f"nightly at {as_of.isoformat()}")
-    runs = run_nightly(as_of, args.tenant, trigger="cli")
+    runs = run_nightly(as_of, args.tenant, trigger="cli", force=args.force)
     for run in runs:
         line = f"{run.tenant_id}  {run.status:<9} {json.dumps(run.counts)}"
         print(f"{line}  {run.error}" if run.error else line)
@@ -44,6 +44,11 @@ def main(argv: list[str]) -> int:
     parser.add_argument("command", choices=["nightly", "bootstrap"])
     parser.add_argument("--as-of", help="ISO 8601 UTC timestamp (nightly)")
     parser.add_argument("--tenant", help="tenant slug or uuid; default is every tenant (nightly)")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="re-run a succeeded night; refused unless it is the tenant's latest (nightly)",
+    )
     parser.add_argument("--config", help="config YAML (bootstrap)")
     parser.add_argument("--data", default="data", help="generated data directory (bootstrap)")
     args = parser.parse_args(argv)

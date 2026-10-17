@@ -23,7 +23,10 @@ TINY = ROOT / "tests" / "fixtures" / "tiny.yaml"
 
 # Child tables first, so a purge never trips a foreign key.
 PURGE_ORDER = (
+    "task_events",
     "tasks",
+    "briefings",
+    "transitions",
     "scores",
     "job_runs",
     "snapshots",
