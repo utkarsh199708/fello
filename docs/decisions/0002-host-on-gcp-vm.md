@@ -54,6 +54,12 @@ The bootstrap finished at 21:52 UTC. Anchors took 457 s and training 110 s. Afte
 
 The scheduler is armed at `0 2 * * *` UTC, so the first unattended night is 2026-10-17 02:00 UTC.
 
+## Step 4 redeploy and the first unattended night, 2026-10-17 (UTC)
+
+Commit `44e031b` was redeployed with fresh volumes at 23:12 UTC on 2026-10-16. Feature set fs4 and the new model roles need a fresh bootstrap. It finished at 23:35, and the live model is `lightgbm-73976df6c317`. That is the same version hash the local Windows run produced from the same config, so training is reproducible across Windows and the Linux image.
+
+At 02:00 UTC on 2026-10-17 the scheduler fired the nightly job with nobody involved (`trigger: schedule`). All five tenants succeeded in 21 s. The night took in the events received since the bootstrap night: 422, 205, 139, 161 and 72 for t1 to t5. It quarantined 11, 3, 1, 1 and 2, and rejected 12 replays. The gate's mean-probability shift against the bootstrap night was at most 0.0015. Public `/health` shows that night as the last run. This is milestone M1's "a row nobody triggered".
+
 ## Affects
 
 TASKS.md items 1.15, 2.15 and 7.1 now mean "redeploy to the VM" rather than Railway. D2 (spend) is approved at about $21 a month, and D3 (project and Postgres) is done.
