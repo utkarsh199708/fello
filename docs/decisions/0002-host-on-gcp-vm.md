@@ -64,6 +64,10 @@ At 02:00 UTC on 2026-10-17 the scheduler fired the nightly job with nobody invol
 
 Commit `c9a9ae4` was deployed at 06:28 UTC, with the volumes kept. Migration 0004 only adds tables and columns, so the bootstrap night and the unattended 02:00 night are untouched, and the worker found both already succeeded. The first night under policy version 1 is 2026-10-18 at 02:00 UTC. It seeds a task for every top-8 account and writes the first transitions and briefings, with nobody involved. The admin trigger is not used on the live system for a night the scheduler owns: a forced re-run would replace that night's `trigger: schedule`.
 
+## Step 6 redeploy, 2026-10-17 (UTC)
+
+Commit `dd1188d` was deployed at 07:32 UTC, with the volumes kept and no migration. The live dashboard has the re-sortable list, the task buttons behind CSRF, the run history, quarantine and worst-misses pages, and the staleness header. With the shared password the switcher answers 200, and every tenant page redirects to it until a tenant and CSM are chosen. Without the password every page except `/health` answers 401.
+
 ## Affects
 
 TASKS.md items 1.15, 2.15 and 7.1 now mean "redeploy to the VM" rather than Railway. D2 (spend) is approved at about $21 a month, and D3 (project and Postgres) is done.
