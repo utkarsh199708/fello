@@ -1,5 +1,5 @@
 {
-  "updated": "2026-10-17 00:34",
+  "updated": "2026-10-17 14:25",
   "status": {},
   "log": [
     {
@@ -125,6 +125,10 @@
     {
       "at": "2026-10-17 00:34",
       "msg": "1.7, 1.8 done: Active contract follows received renewal events (active_contracts, fs2); renewal-day leak fixed (a48d6e8)"
+    },
+    {
+      "at": "2026-10-17 14:25",
+      "msg": "Steps 2 to 7 were built and deployed to a GCP VM by a separate session (01:40 to 13:17, commits d3ea503 to e2b4d8a). Duplicate Step 2-3 workflow stopped."
     }
   ]
 }
