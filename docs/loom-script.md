@@ -67,8 +67,9 @@ Part 1 is steps 1 to 6 (about 5 minutes). Part 2 is steps 7 to 12 (about 5 minut
 
 **Step 4. Live site: My list (1 min 30 s)**
 - Do: switch to the browser on My list. Point at the sidebar, then the summary sentence, then the groups.
-- Say: "This is what a CSM opens on Monday. The sidebar shows whose book this is, [organisation] and [CSM], and at the bottom, last night's run. One sentence sums up the week: [N] accounts to work, [amount] of ARR at risk, and [N] tasks that have waited too long."
-- Say: "The list is grouped by urgency. Escalated first: these tasks were untouched for 5 business days with renewal close. Then the rest of this week's top 8, then a watch list. Each row shows when it renews, the ARR, why it's here in plain words, the probability, and the ARR at risk."
+- Say: "This is what a CSM opens on Monday. The sidebar shows whose book this is, [organisation] and [CSM], and at the bottom, last night's run. One sentence sums up the week: [N] accounts to work, and [amount] of ARR at risk."
+- Say: "The list is grouped by urgency: this week's top 8, then a watch list of the next 16, then everyone else folded away. Each row shows when it renews, the ARR, why it's here in plain words, the probability, and the ARR at risk."
+- Say: "These tasks were raised on the 18th, so they're a day or two old. If a CSM leaves one untouched for 5 business days and the renewal is within 60 days, it's escalated and pinned to the top, in an Escalated group above this one. That's what replaces the automatic email: nothing goes unseen."
 - Do: click Done on one row in "This week". Then open the "···" menu on another row.
 - Say: "One action per row. Done closes the task. Behind this menu: snooze a week, dismiss with a reason, and the briefing explaining why the task was raised. Every click is written to an audit trail."
 
@@ -94,7 +95,7 @@ Part 1 is steps 1 to 6 (about 5 minutes). Part 2 is steps 7 to 12 (about 5 minut
 
 **Step 8. Live site: the night of 18 October (45 s)**
 - Do: click 2026-10-18.
-- Say: "The 18th was the first night under the task policy. Across the five organisations it raised 371 tasks by itself, one for each account in a CSM's top 8. Here are the stages with their timings, the accounts that moved in or out of a top 8, and every task with the rule that raised it. On later nights only a few new tasks appear, because a task needs three nights outside the top 8 before it can open again, so scores near the line don't flap."
+- Say: "The 18th was the first night under the task policy. For this organisation it raised [144] tasks by itself, one for each account in a CSM's top 8, using the seed rule; across all five organisations it was 371. Here are the stages with their timings, the accounts that moved in or out of a top 8, and every task with the rule that raised it. On the nights since, only one or two new tasks appear, because a task needs three nights outside the top 8 before it can open again, so scores near the line don't flap."
 
 **Step 9. Deck slide 8, "Beats rules and the calendar; ties logistic regression" (1 min 15 s)**
 - Say: "Does the model work? I held out a year of renewals. Each CSM's weekly top 8 caught 21.8% of the renewals that were then lost or contracted, against 14.8% for hand-written rules and 12.4% for a baseline from days to renewal."
@@ -105,7 +106,7 @@ Part 1 is steps 1 to 6 (about 5 minutes). Part 2 is steps 7 to 12 (about 5 minut
 - Say: "These are the headline tests: a late event never changes an old snapshot; another organisation's rows are invisible on every table; a crash part-way, then a rerun, gives one clean night and no duplicate tasks; and identical or oscillating scores don't create a flood of tasks. There are 240 tests in all, and CI runs them on every push."
 
 **Step 11. Deck slide 10, "What breaks first at 10x, measured" (1 min)**
-- Say: "What breaks first at ten times the scale? I measured it from the live timings. Today a whole night takes about 21 seconds. At ten times the events, the nightly run is still about four minutes. What breaks first is the one-time bootstrap: it rebuilds training snapshots for every Monday by re-reading every event, so one organisation takes about 40 minutes and peaks near a gigabyte of memory. On this 2 GB server it runs out of memory before it runs out of time. The fix is to build those snapshots incrementally."
+- Say: "What breaks first at ten times the scale? I measured it from the live timings. The first unattended night took 21 seconds for all five organisations; now, with the task stages, the largest one takes about 14 seconds. At ten times the events, the nightly run is still about four minutes. What breaks first is the one-time bootstrap: it rebuilds training snapshots for every Monday by re-reading every event, so one organisation takes about 40 minutes and peaks near a gigabyte of memory. On this 2 GB server it runs out of memory before it runs out of time. The fix is to build those snapshots incrementally."
 
 **Step 12. Deck slide 11, "With real data, the first four steps" (30 s)**
 - Say: "With real data, the first step is to refit on actual renewals and report the same tables. Then use the CSMs' dismissal reasons as feedback. The brief I wrote before any code, the decision log, and the README are all in the repository. Thank you."
