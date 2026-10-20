@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import base64
 import re
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 import sqlalchemy as sa
@@ -111,7 +111,9 @@ def test_every_page_renders(client, seeded):
 def test_the_list_is_stale_when_no_night_succeeded_for_a_day(client, seeded, mp):
     login(client, seeded[0], task_csm(seeded[0]))
     assert 'class="fresh" id="staleness"' in client.get("/list").text
-    mp.setenv("CLOCK_OVERRIDE", "2026-10-20T09:00:00Z")
+    # finished_at is stamped by the wall clock when the test nights run, so "over a day later"
+    # must be measured from the wall clock, not from a fixed date.
+    mp.setenv("CLOCK_OVERRIDE", (datetime.now(UTC) + timedelta(days=2)).isoformat())
     try:
         assert 'class="stale" id="staleness"' in client.get("/list").text
     finally:
