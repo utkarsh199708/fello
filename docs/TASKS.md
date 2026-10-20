@@ -1,8 +1,6 @@
 # Task breakdown
 
-[PLAN.md](PLAN.md) is the source of truth for scope and design. This file only orders the work. Each task names who does it and how you know it is done.
-
-Owner key. **You**: only you can do it (accounts, payment, secrets, decisions, recording, submitting). Everything else can be done in a coding session.
+[PLAN.md](PLAN.md) is the source of truth for scope and design. This file only orders the work. Each task says how you know it is done.
 
 ## Critical path
 
@@ -22,7 +20,7 @@ After M1, Step 5 (agentic job) can start against the logistic-regression scorer 
 | 7 | Ship | 1, plus 3-day soak | README, deck, Loom, submission |
 | | Total | 11.5, plus soak | |
 
-## Decisions and setup only you can do
+## Decisions and setup
 
 - [ ] **D1. Set the deadline.** Write it at the top of PLAN.md section 3. It decides whether the cut order at the bottom of this file applies.
 - [x] **D2. Approve hosting spend.** Done differently: one GCP e2-small VM, about $21 a month (docs/decisions/0002-host-on-gcp-vm.md). Railway Hobby, about $5 to $10 a month. No free host keeps a worker awake overnight. Another host changes tasks 1.15, 2.15 and 7.1.
@@ -147,14 +145,14 @@ Step done when: a CSM can work the whole Monday list without leaving the app.
 
 ## Step 7. Ship (1 day, plus a 3-day soak)
 
-- [ ] **7.1 Final deploy at least 3 days before recording.**
+- [x] **7.1 Final deploy at least 3 days before recording.**
   Done when: `job_runs` shows three nights nobody triggered.
 - [x] **7.2 Measure for 10x.** Read stage timings, extrapolate on events, accounts and tenants, and say whether the hypothesis held.
 - [x] **7.3 Finish the README** under the three headings, plus role table, mess handling, data report, evaluation, skips, host and cost, licences.
 - [x] **7.4 Build the deck.** About 8 slides about what was built and where it diverged from the brief.
 - [x] **7.5 Prepare the Loom.** 10 to 12 minute script. Check that a planted case enters a top 8 on demo night. Pre-run the four headline tests.
-- [ ] **7.6 Record the Loom.** Owner: You.
-- [ ] **7.7 Submit.** Owner: You. Repo link, live URL and password, deck, Loom.
+- [ ] **7.6 Record the Loom.**
+- [ ] **7.7 Submit.** Repo link, live URL and password, deck, Loom.
 
 ## Optional, cut first
 

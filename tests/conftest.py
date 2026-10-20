@@ -9,7 +9,7 @@ A test that needs Postgres requests the ``database_url`` fixture. The first such
 4. runs ``migrate()``, which recreates the database, the roles and the schema.
 
 If Postgres cannot be reached, every test that needs it is skipped. Tests that do not request
-the fixture never touch a database. Each agent or developer can point ``TEST_DATABASE_URL`` at
+the fixture never touch a database. Each developer can point ``TEST_DATABASE_URL`` at
 its own database, for example ``.../fello_test_platform``, so parallel runs never collide.
 """
 

@@ -33,7 +33,7 @@ own group's rows. Anything this note leaves open is yours to decide. Log it in `
    carrying another tenant's id was rejected in the probe.
 2. **Roles are created by `migrate`, not by the Alembic revision.** Creating a `BYPASSRLS` role needs a superuser, and
    passwords must come from env. `db.prepare_database()` runs as the admin URL. It creates the database if missing,
-   creates the three roles if missing (catching `duplicate_object`, since roles are cluster-wide and agents run in
+   creates the three roles if missing (catching `duplicate_object`, since roles are cluster-wide and test runs happen in
    parallel) and grants schema `public` `CREATE` to `app_owner`. Alembic then runs as `app_owner`, so `app_owner` owns
    every table and FORCE RLS binds it. There is no compose initdb script: the existing `pgdata` volume would never run
    it, and Railway has none.
@@ -326,7 +326,7 @@ DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/fello_dev_<ro
   `postgresql+psycopg://postgres:postgres@localhost:5432/fello_test`. It refuses any database whose name does not
   start with `fello_test`. Once per session it drops and recreates that database, sets `DATABASE_URL` to it, sets the
   three dev passwords with `setdefault` and runs `migrate()`. If Postgres is unreachable, it skips the DB tests.
-- Each agent sets `TEST_DATABASE_URL=.../fello_test_<role>`.
+- Each parallel test run sets `TEST_DATABASE_URL=.../fello_test_<name>`.
 - Fixtures other than the database live in the test module that uses them. Shared seeding goes through
   `tests/helpers.py`, imported as `from tests.helpers import seed_tiny`; each module seeds into its own `tmp_path`.
 
