@@ -2,9 +2,7 @@
 
 Every Monday, each customer success manager (CSM) gets a short, ranked list: the accounts most worth working this week, in order, and why. Every reason traces through to the raw events behind it. A nightly job rescores every account with nobody pressing a button. It opens a task when an account enters its CSM's top 8, escalates a task nobody touched near renewal, and logs every decision.
 
-Built for the Fello GTM AI take-home. The brief, written before any code, is [docs/brief.md](docs/brief.md), and it is the first commit. The plan is [docs/PLAN.md](docs/PLAN.md), and the build log is in [docs/decisions/](docs/decisions/). An organisation (a tenant) is one customer of the product, with its own CSMs, accounts and data.
-
-![One CSM's Monday list: risk, the money at stake, the top reasons and the task for each account](docs/img/list.png)
+Built for the Fello GTM AI take-home. An organisation (a tenant) is one customer of the product, with its own CSMs, accounts and data.
 
 ## For reviewers: the two-minute version
 
@@ -15,17 +13,10 @@ Built for the Fello GTM AI take-home. The brief, written before any code, is [do
 - **Every number is traceable.** A score page lists each factor's contribution and checks that they add up to the model's output. Each factor links to the events it was computed from. `python -m app rescore <score_id>` reproduces any stored score.
 - **Five organisations, one database, no leaks.** Row-level security is forced on every tenant table. Another organisation's id answers 404, and a query with no organisation set sees no rows.
 - **Honest limits.** All data is synthetic, so these numbers validate the pipeline and the ranking, not real-world churn. LightGBM and logistic regression tie on this data. What breaks first at 10x is measured, further down.
-- **Questions I expect in the walkthrough**, answered with evidence: [docs/design-questions.md](docs/design-questions.md).
-
-| A score, factor by factor | The nights nobody triggered |
-|---|---|
-| ![Score drill-down: each factor's contribution, the reconciliation check and links to raw events](docs/img/score.png) | ![Run history: every night, its trigger, counts and timing](docs/img/runs.png) |
-
-Screenshots are from a local run on the same synthetic data, a week after launch, so they show escalated tasks.
 
 ## What I decided
 
-**The problem, and so the product.** The request was a red/yellow/green health score with an automatic email when an account goes red. The problem is prioritisation. Each CSM can work perhaps 8 of 120 accounts a week, and the signals that predict a lost renewal are spread over five systems that nobody joins. So the product is a ranked list per CSM with reasons, not a score per account ([docs/brief.md](docs/brief.md)).
+**The problem, and so the product.** The request was a red/yellow/green health score with an automatic email when an account goes red. The problem is prioritisation. Each CSM can work perhaps 8 of 120 accounts a week, and the signals that predict a lost renewal are spread over five systems that nobody joins. So the product is a ranked list per CSM with reasons, not a score per account.
 
 **Where I disagreed with the request, and what replaced it.**
 
@@ -77,7 +68,7 @@ Screenshots are from a local run on the same synthetic data, a week after launch
 
 Web and worker are given the superuser URL to derive the role URLs from, and the worker uses it for the first `migrate` step. No request or job query runs as the superuser. A production setup would give the web process only the `app` credentials.
 
-**What the pipeline does with the mess** ([docs/decisions/step-2-log.md](docs/decisions/step-2-log.md), [step-3-log.md](docs/decisions/step-3-log.md)):
+**What the pipeline does with the mess:**
 
 - **Identity.** Each event is matched by the crosswalk of system keys, then by email domain. Otherwise it goes to quarantine with a reason, and the count is on the list page.
 - **Duplicates.** An exact replay is rejected and the first delivery kept. A re-sent ticket snapshot resolves to the newest state. A renewal reported by Salesforce and Stripe becomes one outcome.
@@ -88,7 +79,7 @@ Web and worker are given the superuser URL to derive the role URLs from, and the
 - **Customer email addresses** in event payloads are HMAC-hashed per organisation at load, with the domain kept in clear. CSM emails (staff, not customer data) are stored in clear for the switcher.
 - **Payment failures are signals, not the label.** A failed mid-term payment is a feature. The renewal invoice failing for good is part of the outcome, and outcome event types are deny-listed from every feature in one constant (`OUTCOME_EVENT_TYPES`).
 
-**Host and cost.** One GCP e2-small VM in Mumbai runs the same Docker Compose stack as a laptop, behind Caddy for HTTPS. It costs about $21 a month ([docs/decisions/0002-host-on-gcp-vm.md](docs/decisions/0002-host-on-gcp-vm.md)). The worker has run unattended since 2026-10-17, and `/health` shows the last night with `trigger: schedule`. The synthetic data keeps arriving until 2026-12-14. After that the nights keep running and rescoring, on no new events.
+**Host and cost.** One GCP e2-small VM in Mumbai runs the same Docker Compose stack as a laptop, behind Caddy for HTTPS. It costs about $21 a month. The worker has run unattended since 2026-10-17, and `/health` shows the last night with `trigger: schedule`. The synthetic data keeps arriving until 2026-12-14. After that the nights keep running and rescoring, on no new events.
 
 ## What I deliberately skipped
 
@@ -110,7 +101,7 @@ Web and worker are given the superuser URL to derive the role URLs from, and the
 
 ## What breaks first at 10x
 
-Measured from the live nights and a local profile of the feature build ([docs/decisions/step-7-10x.md](docs/decisions/step-7-10x.md)). The first unattended night took 21 s for all five organisations. For t1 (2,000 accounts, 84,000 raw event rows) it was 9.5 s: 2.7 s ingest, 4.4 s snapshot, 2.0 s score and 0.3 s gate. That night ran before the decision stages were deployed; locally they add under a second for t1 (0.2 s transitions, 0.6 s policy and tasks). The snapshot scales at about 0.05 ms per event, and scoring at about 1 ms per account.
+Measured from the live nights and a local profile of the feature build. The first unattended night took 21 s for all five organisations. For t1 (2,000 accounts, 84,000 raw event rows) it was 9.5 s: 2.7 s ingest, 4.4 s snapshot, 2.0 s score and 0.3 s gate. That night ran before the decision stages were deployed; locally they add under a second for t1 (0.2 s transitions, 0.6 s policy and tasks). The snapshot scales at about 0.05 ms per event, and scoring at about 1 ms per account.
 
 - **10x events (2M):** the nightly run stays fine, at about 4 minutes. **The first thing to break is the bootstrap's weekly anchor build.** It re-reads every event for every Monday (about 0.4 s plus 7 µs per event, 147 Mondays), so t1 alone would take about 40 minutes on the VM, and the feature build would peak near 0.9 GB. On a 2 GB host that also runs Postgres, it runs out of memory before it runs out of time.
 - **10x accounts (50,000):** scoring stays fast, but storage binds. Snapshots grow to about 4.5 GB, and scores to about 3 GB a month with full contribution vectors, which fills a 20 GB disk within weeks. Training then has to read 3.2M JSON feature rows at once.
@@ -174,8 +165,7 @@ Secret scanning runs as a gitleaks pre-commit hook. Set it up once per clone wit
 
 ## Data report
 
-All data is synthetic. `python -m app data --config config/full.yaml` writes it, and `python -m app data-report` prints the report below. The report reads only what the pipeline would see, never `data/truth/`. It uses the resolve step's own matching rules, so the quarantine line is what ingest will produce. Regenerating gives identical bytes on Windows and in the Linux image. What each kind of mess is, and which step handles it, is in [docs/decisions/step-2-log.md](docs/decisions/step-2-log.md).
-
+All data is synthetic. `python -m app data --config config/full.yaml` writes it, and `python -m app data-report` prints the report below. The report reads only what the pipeline would see, never `data/truth/`. It uses the resolve step's own matching rules, so the quarantine line is what ingest will produce. Regenerating gives identical bytes on Windows and in the Linux image.
 Notes for reading it:
 
 - Totals count distinct events. "Replays" are the extra deliveries of an event that already arrived (duplicate kind 1).
@@ -270,13 +260,12 @@ From truth, checked by `tests/test_generator_mess.py`:
 
 ## Evaluation
 
-`python -m app evaluate --config config/full.yaml` prints the evaluation below. It runs on the test cycles of a cycle-based temporal split: the training cycles renew on or before 2025-10-12, and the test cycles renew after it, up to 2026-10-12. Every weekly row of one account's cycle sits on one side. The model under test is the evaluation fit, trained on the training cycles only. The live model is a refit on every cycle, with the same settings. How it is built is in [docs/decisions/step-4-log.md](docs/decisions/step-4-log.md).
-
+`python -m app evaluate --config config/full.yaml` prints the evaluation below. It runs on the test cycles of a cycle-based temporal split: the training cycles renew on or before 2025-10-12, and the test cycles renew after it, up to 2026-10-12. Every weekly row of one account's cycle sits on one side. The model under test is the evaluation fit, trained on the training cycles only. The live model is a refit on every cycle, with the same settings.
 What it says, plainly:
 
 - **Both models beat the hand-written rules.** LightGBM's ROC-AUC is 0.600 and its PR-AUC 0.248. The rules score 0.547 and 0.201. I wrote both the rules and the generator, so this shows the model learns combinations of signals the rules miss. It says nothing about beating a CSM's judgement.
 - **Days to renewal carries no signal on its own.** Its ROC-AUC is 0.500 and its PR-AUC equals the base rate, so its calibrated probability is flat. Multiplied by ARR for the ranking, that row is in effect a sort by ARR. The model beats it on recall@8 (21.8% against 12.4%) and on ARR recall@8 (32.2% against 25.1%). Inside the model, days to renewal carries 0.8% of the contributions and is the top reason on under 0.05% of test rows, so the model is not a calendar.
-- **LightGBM and logistic regression are within noise of each other.** The ROC-AUC difference is +0.009, with a 95% interval of -0.009 to +0.028, from a paired bootstrap over accounts. Logistic regression is slightly ahead on PR-AUC and recall@8. The rule in `app/ml/train.py` keeps LightGBM unless logistic regression wins the validation tail by at least 1% lower log loss over at least 100 renewal cycles; here they are 0.4% apart. I set that margin after the first validation run showed them this close, and the log says so ([docs/decisions/step-4-log.md](docs/decisions/step-4-log.md)): the first rule would have switched models on noise. Either model is defensible. LightGBM keeps a missing source as missing, where logistic regression fills it with the average.
+- **LightGBM and logistic regression are within noise of each other.** The ROC-AUC difference is +0.009, with a 95% interval of -0.009 to +0.028, from a paired bootstrap over accounts. Logistic regression is slightly ahead on PR-AUC and recall@8. The rule in `app/ml/train.py` keeps LightGBM unless logistic regression wins the validation tail by at least 1% lower log loss over at least 100 renewal cycles; here they are 0.4% apart. I set that margin after the first validation run showed them this close: the first rule would have switched models on noise. Either model is defensible. LightGBM keeps a missing source as missing, where logistic regression fills it with the average.
 - **The oracle is a reference, not a ceiling.** It ranks by the generator's hidden account health and reaches a ROC-AUC of only 0.650: about 21% of churn shows no signal, and health moves between the anchor and the renewal. It ignores the organisation-level churn rate that the models learn, so on recall@8 and lead time the models are level with it (21.8% and 23.7% against 23.6%) or ahead.
 - **Planted cases.** 7 of the 10 planted "signals were sitting right there" cases enter their CSM's top 8 at least 4 weeks before the notice deadline. For 9 of them the top reason is a ticket or usage feature.
 - **Calibration** is good up to a predicted probability of 0.3, which covers about 90% of rows. Above that the model is too pessimistic.
