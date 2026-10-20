@@ -167,8 +167,17 @@ def test_task_buttons_need_csrf_and_write_an_audit_row(client, seeded):
         t=task,
     )
     assert event.detail["to"] == "dismissed" and event.detail["from"] == "open"
-    # A closed task cannot change again.
-    assert client.post(url, data={"status": "done", "csrf": token}).status_code == 404
+    # A closed task cannot change again. A second click (a double click, a resent form) goes
+    # back to the list instead of an error page, and changes and audits nothing.
+    r = client.post(url, data={"status": "done", "csrf": token})
+    assert r.status_code == 303 and r.headers["location"] == "/list"
+    assert one(tid, "SELECT status FROM tasks WHERE task_id = :t", t=task).status == "dismissed"
+    events = one(
+        tid,
+        "SELECT count(*) AS n FROM task_events WHERE task_id = :t AND kind = 'status_changed'",
+        t=task,
+    )
+    assert events.n == 1
 
 
 def test_snooze_sets_a_date_a_week_out(client, seeded):

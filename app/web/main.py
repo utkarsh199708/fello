@@ -402,7 +402,11 @@ def create_app() -> FastAPI:
             raise HTTPException(400, "unknown status")
         with tenant_tx(ids[0]) as conn:
             changed = q.set_task_status(conn, task_id, status, reason, str(ids[1]))
-        if not changed:
+            # A double click or a resent form reaches a task that is already closed: go back to
+            # the list. Only a task this organisation cannot see answers 404.
+            exists = sa.text("SELECT 1 FROM tasks WHERE task_id = :t")
+            visible = changed or conn.execute(exists, {"t": task_id}).first() is not None
+        if not visible:
             raise HTTPException(404)
         return RedirectResponse("/list", status_code=303)
 
