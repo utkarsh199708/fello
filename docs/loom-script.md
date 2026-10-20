@@ -8,7 +8,7 @@ The script is two parts of under five minutes each, so it fits Loom's free plan 
 
 ## Before recording
 
-**Record on or after 2026-10-20.** That gives three nights nobody triggered (17, 18 and 19 October) and three days since the final deploy on 2026-10-17. Do not redeploy before recording.
+**Ready to record.** Four nights ran unattended (17 to 20 October), and the final deploy was on 2026-10-17. Do not redeploy before recording.
 
 **Never show secrets.**
 
@@ -47,82 +47,72 @@ sudo docker compose -f compose.yaml -f deploy/compose.gcp.yaml exec worker pytho
 
 **No live trigger.** The admin trigger would take a night the scheduler owns, and its no-op rule means a run for today does nothing. The script shows the scheduled nights instead.
 
-## Part 1: the product (under 5 minutes)
+## The script, screen by screen
 
-### 1. The problem, and what I built instead (0:00 to 0:50)
+Each step says which screen to show, what to do on it, and what to say. Numbers in [square brackets] differ between organisations and nights: read them off the screen. Everything else is fixed and checked.
 
-Show: deck slide 2.
+Part 1 is steps 1 to 6 (about 5 minutes). Part 2 is steps 7 to 12 (about 5 minutes). On a paid plan, record both in one take.
 
-- "The ask was a red, yellow, green score per account, and an email to the customer when it goes red."
-- "The real problem is prioritisation. A CSM has about 120 accounts and can work about 8 properly in a week. The signals for the two lost renewals were in Zendesk and in product usage. Nobody joined them."
-- "So I built a ranked Monday list per CSM, with the reasons, and a nightly job that runs it with nobody pressing a button. I pushed back on three parts of the request, and I'll show what replaced each one."
+### Part 1: the product
 
-### 2. The Monday list (0:50 to 2:20)
+**Step 1. Deck slide 1, the title (15 s)**
+- Do: nothing; this is the opening frame.
+- Say: "Hi, I'm Utkarsh. This is my take-home for Fello's GTM AI team. I built Monday list: every Monday, each customer success manager gets a short, ranked list of the accounts most worth working this week, with the reasons, and a nightly job keeps it current with nobody pressing a button."
 
-Show: `/list`.
+**Step 2. Deck slide 2, "The ask was a health score; the problem is prioritisation" (45 s)**
+- Say: "The request was a red, yellow, green score per account, and an email to the customer when one goes red. But the real problem is prioritisation. A CSM owns about 120 accounts and can properly work about 8 a week. The two renewals that were lost had their signs in Zendesk and product usage, and nobody joined them up. So I built a ranked list per CSM, with reasons, not a score per account."
 
-- The four cards: "This CSM has 8 accounts to work this week, and this much ARR at risk across them."
-- "Red is the top 8 by expected ARR at risk: probability times ARR. A $2k account at 60% should not outrank a $200k account at 50%." Re-sort once by probability to show the difference, then back.
-- The reason chips: "These are the model's own top factors for this account, with their values. Not a rule I wrote."
-- An escalated task at the top: "Untouched for 5 business days, close to renewal, so it is escalated and pinned. This replaced the automatic email. A task to a CSM is reversible; an email to a customer is not."
-- Grey accounts: "Not enough signal. Grey is never green."
+**Step 3. Deck slide 6, "Where I disagreed with the request" (45 s)**
+- Say: "I disagreed with three things, and wrote them in my brief before any code. No automatic email: it can reach the wrong person, because the contact on file is often the champion who left; it can say the wrong thing, because a support backlog and a failed payment need different conversations; and it fires on a noisy trigger. Instead, an account entering the top 8 gets a task, and a task left untouched near renewal is escalated. Second, colour comes from rank: the top 8 in each book is red. Third, the list is ranked by ARR at risk, probability times ARR, so a $2,000 account at 60% doesn't outrank a $200,000 account at 50%."
 
-### 3. One account, down to the raw events (2:20 to 4:00)
+**Step 4. Live site: My list (1 min 30 s)**
+- Do: switch to the browser on My list. Point at the sidebar, then the summary sentence, then the groups.
+- Say: "This is what a CSM opens on Monday. The sidebar shows whose book this is, [organisation] and [CSM], and at the bottom, last night's run. One sentence sums up the week: [N] accounts to work, [amount] of ARR at risk, and [N] tasks that have waited too long."
+- Say: "The list is grouped by urgency. Escalated first: these tasks were untouched for 5 business days with renewal close. Then the rest of this week's top 8, then a watch list. Each row shows when it renews, the ARR, why it's here in plain words, the probability, and the ARR at risk."
+- Do: click Done on one row in "This week". Then open the "···" menu on another row.
+- Say: "One action per row. Done closes the task. Behind this menu: snooze a week, dismiss with a reason, and the briefing explaining why the task was raised. Every click is written to an audit trail."
 
-Show: the demo account's score page, then one factor's raw events.
+**Step 5. Live site: one score page (1 min 15 s)**
+- Do: click the probability on a red row, preferably one whose reason is "Seats in use" or "Open tickets".
+- Say: "Every number is traceable. This is why [account] scores [probability]. Each factor shows how much it pushes the risk up or down, largest first. These come from the model itself, not a rule I wrote."
+- Do: click Raw events on the top factor. Scroll down to the events and the green reconciliation box.
+- Say: "Raw events shows exactly which events that factor was computed from, and how each was matched to this account. And this check proves the contributions add up exactly to the model's output. The rescore command reproduces any stored score from a terminal."
 
-- "What moves this score, largest push towards risk first. Red bars raise the risk, green bars lower it; the small factors fold away below."
-- The reconciliation box: "The contributions add up to the model's output, checked on the page. `rescore` with this id reproduces the score from a terminal."
-- The snapshot line: "This score saw events received up to this time, from this model."
-- Click "raw events" on the top factor: "These are the actual events behind that number, and how each one was matched to the account."
-- If an "arrived late" marker is on the account page: "This arrived after the snapshot. It changes tonight's score, never last week's."
+**Step 6. Live site: the account page, then another organisation (45 s)**
+- Do: click "Account timeline". Point at the score history, the task, the timeline.
+- Say: "The account page has the score history, the task with its full audit trail, the contracts, and every raw event, including events that arrived late. A late event changes the next night's score, never an old one."
+- Do: copy the address bar, click the organisation box in the sidebar, pick a different organisation and CSM, then paste the copied link.
+- Say: "Five separate customer organisations share this system. If I open the first organisation's account while in another one, it answers not found. Postgres row-level security enforces that on every table, so a bug in a query can't leak another customer's data."
+- End of Part 1: "In part 2: the job that runs itself, whether the model works, and what breaks at 10x."
 
-### 4. Five organisations, one database (4:00 to 4:40)
+### Part 2: proof and scale
 
-Show: "Switch organisation or CSM", then a pasted URL.
+**Step 7. Live site: Nightly runs (1 min)**
+- Do: click Nightly runs.
+- Say: "This is the agentic part. Every night at 2 a.m. UTC the worker runs the job by itself. Each of these rows says Scheduled: started by the clock, not by a person. The 17th, 18th, 19th and 20th of October all ran unattended for all five organisations."
+- Say: "Each night ingests new events, scores every account, runs a data-quality gate, and only then raises and escalates tasks. If the gate trips, the night rolls back and publishes nothing, and the list keeps the last good night with a warning."
 
-- Switch to another organisation: the list changes completely.
-- Paste the first organisation's score URL: "404. Row-level security is forced on every table, and with no organisation set a query sees nothing."
-- Hand-over: "Part 2 covers the nightly job, whether the model works, and what breaks at 10x."
+**Step 8. Live site: the night of 18 October (45 s)**
+- Do: click 2026-10-18.
+- Say: "The 18th was the first night under the task policy. Across the five organisations it raised 371 tasks by itself, one for each account in a CSM's top 8. Here are the stages with their timings, the accounts that moved in or out of a top 8, and every task with the rule that raised it. On later nights only a few new tasks appear, because a task needs three nights outside the top 8 before it can open again, so scores near the line don't flap."
 
-## Part 2: proof and scale (under 5 minutes)
+**Step 9. Deck slide 8, "Beats rules and the calendar; ties logistic regression" (1 min 15 s)**
+- Say: "Does the model work? I held out a year of renewals. Each CSM's weekly top 8 caught 21.8% of the renewals that were then lost or contracted, against 14.8% for hand-written rules and 12.4% for a baseline from days to renewal."
+- Say: "To be honest about it: LightGBM ties logistic regression, a difference of plus 0.009 with a confidence interval that crosses zero. The oracle, which knows the generator's hidden health, only reaches 0.65, because a fifth of churn has no visible signal by design. Shuffled labels score 0.48, so there's no leakage, and days to renewal is under 1% of the model, so it isn't just a calendar. All of this validates the pipeline on synthetic data, not real churn."
 
-### 5. The night that runs itself (0:00 to 1:30)
+**Step 10. Terminal: the pre-run tests (30 s, optional)**
+- Do: show the terminal with the test output already run. Check that no secret is on screen.
+- Say: "These are the headline tests: a late event never changes an old snapshot; another organisation's rows are invisible on every table; a crash part-way, then a rerun, gives one clean night and no duplicate tasks; and identical or oscillating scores don't create a flood of tasks. There are 240 tests in all, and CI runs them on every push."
 
-Show: `/runs`, then the latest night.
+**Step 11. Deck slide 10, "What breaks first at 10x, measured" (1 min)**
+- Say: "What breaks first at ten times the scale? I measured it from the live timings. Today a whole night takes about 21 seconds. At ten times the events, the nightly run is still about four minutes. What breaks first is the one-time bootstrap: it rebuilds training snapshots for every Monday by re-reading every event, so one organisation takes about 40 minutes and peaks near a gigabyte of memory. On this 2 GB server it runs out of memory before it runs out of time. The fix is to build those snapshots incrementally."
 
-- "Previously: a ranked list per CSM, with every number traceable. This is what keeps it fresh."
-- "These rows say `schedule`. Nobody pressed anything. The first was 17 October at 02:00 UTC."
-- On a night: the stage bars (ingest, snapshot, score, gate, transitions, policy and tasks, escalation), the transitions and the tasks it raised.
-- "If the data-quality gate trips, the night rolls back and the list keeps the last good night, with a warning. Rerunning a succeeded night writes nothing. A task needs three nights outside the top 8 before it can open again, so scores near the line don't flap."
-- "There is no LLM in the ranking. When a key is set, an LLM writes a two-sentence summary after the night, from the reason list only, and any number it invents gets the summary rejected." If the key is set, open the "···" menu on a row and show it.
+**Step 12. Deck slide 11, "With real data, the first four steps" (30 s)**
+- Say: "With real data, the first step is to refit on actual renewals and report the same tables. Then use the CSMs' dismissal reasons as feedback. The brief I wrote before any code, the decision log, and the README are all in the repository. Thank you."
 
-### 6. Does the model work? (1:30 to 3:10)
+### Slides not to show in the Loom
 
-Show: deck slide 8, then the README's evaluation table.
-
-- "This is a temporal holdout: test renewals from October 2025 to October 2026."
-- "Each CSM's weekly top 8 held 21.8% of the renewals that were then lost or contracted. Hand-written rules get 14.8%, and days to renewal 12.4%."
-- "LightGBM and logistic regression tie: a +0.009 ROC-AUC difference, with a 95% interval from −0.009 to +0.028. I set the selection margin after seeing them this close, and the log says so. Either is defensible."
-- "The oracle, which knows the generator's hidden health, reaches only 0.650 ROC-AUC. A fifth of churn has no signal, by design. So the bar is low, and the models are level with the oracle on recall."
-- "No leakage: shuffled labels give 0.48. And it is not a calendar: days to renewal is under 1% of the model."
-- "Planted cases: 7 of 10 reached their CSM's top 8 at least 4 weeks before the notice deadline."
-- "All of this validates the pipeline on data I generated. It is not evidence about real churn."
-
-### 7. The tests (3:10 to 3:40)
-
-Show: the second terminal with the pre-run output.
-
-- "Point in time, isolation on every table, a crash then a rerun giving one clean night, and no flapping. 240 tests in all."
-
-### 8. What breaks first at 10x (3:40 to 4:50)
-
-Show: deck slide 10, then slide 11.
-
-- "I measured from the live stage timings: the whole night took 21 seconds."
-- "At 10x events, the nightly run is still about 4 minutes. What breaks first is the bootstrap's weekly anchor build: it re-reads every event for every Monday, so one organisation takes about 40 minutes and peaks near a gigabyte. On this 2 GB host it runs out of memory before time."
-- "The fix is incremental anchors from running aggregates. With real data, the first step is to refit on real renewals and report the same tables."
-- Close: "The repo, the brief I wrote before any code, and a page of design questions with answers are linked in the README. Thanks."
+Slides 3, 4, 5, 7 and 9 stay in the deck you send. Slides 4 and 5 are screenshots of pages you show live, and 3, 7 and 9 are for reading.
 
 ## After recording
 
